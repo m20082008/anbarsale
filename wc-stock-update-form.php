@@ -675,7 +675,15 @@ function wc_suf_is_yith_pos_order( $order ) {
 
 function wc_suf_get_order_stock_source( $order ) {
     $is_pos = wc_suf_is_yith_pos_order( $order );
-    if ( $is_pos && function_exists( 'yith_pos_stock_management' ) ) {
+
+    $reduced_stock_store_id = (int) $order->get_meta( '_yith_pos_reduced_stock_by_store', true );
+    if ( $reduced_stock_store_id <= 0 ) {
+        $reduced_stock_store_id = (int) $order->get_meta( '_ywpos_reduced_stock_by_store', true );
+    }
+
+    $is_tehranpars_store = ( $reduced_stock_store_id > 0 && $reduced_stock_store_id === (int) WC_SUF_TEHRANPARS_STORE_ID );
+
+    if ( ( $is_tehranpars_store || $is_pos ) && function_exists( 'yith_pos_stock_management' ) ) {
         return [
             'is_pos'     => true,
             'destination'=> 'teh',
