@@ -35,6 +35,7 @@ if ( ! defined('WC_SUF_TEHRANPARS_STORE_ID') ) {
 register_activation_hook(__FILE__, function(){
     global $wpdb;
     $table   = $wpdb->prefix.'stock_audit';
+    $sales_audit_table = $wpdb->prefix.'stock_sales_audit';
     $move_table = $wpdb->prefix.'stock_production_moves';
     $prod_table = $wpdb->prefix.'stock_production_inventory';
     $move_table = $wpdb->prefix.'stock_production_moves';
@@ -68,6 +69,36 @@ register_activation_hook(__FILE__, function(){
     ) $charset;";
 
     dbDelta($sql);
+
+    $sales_sql = "CREATE TABLE `$sales_audit_table` (
+      `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      `event_hash` CHAR(64) NOT NULL,
+      `order_id` BIGINT UNSIGNED NOT NULL,
+      `event_type` VARCHAR(32) NOT NULL,
+      `product_id` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      `variation_id` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      `product_name` TEXT NULL,
+      `sku` VARCHAR(191) NULL,
+      `old_qty` DECIMAL(20,4) NOT NULL DEFAULT 0,
+      `new_qty` DECIMAL(20,4) NOT NULL DEFAULT 0,
+      `qty_diff` DECIMAL(20,4) NOT NULL DEFAULT 0,
+      `stock_source` VARCHAR(32) NOT NULL DEFAULT 'woocommerce',
+      `stock_before` DECIMAL(20,4) NULL,
+      `stock_after` DECIMAL(20,4) NULL,
+      `stock_delta` DECIMAL(20,4) NOT NULL DEFAULT 0,
+      `order_channel` VARCHAR(64) NULL,
+      `branch` VARCHAR(191) NULL,
+      `actor_user_id` BIGINT UNSIGNED NULL,
+      `meta_payload` LONGTEXT NULL,
+      `created_at` DATETIME NOT NULL,
+      PRIMARY KEY (`id`),
+      UNIQUE KEY `event_hash` (`event_hash`),
+      KEY `order_id` (`order_id`),
+      KEY `event_type` (`event_type`),
+      KEY `product_id` (`product_id`),
+      KEY `created_at` (`created_at`)
+    ) $charset;";
+    dbDelta($sales_sql);
 
     $sql_prod = "CREATE TABLE `$prod_table` (
       `product_id` BIGINT UNSIGNED NOT NULL,
@@ -132,6 +163,7 @@ add_action('plugins_loaded', function(){ wc_suf_maybe_upgrade_schema(); });
 function wc_suf_maybe_upgrade_schema(){
     global $wpdb;
     $table = $wpdb->prefix.'stock_audit';
+    $sales_audit_table = $wpdb->prefix.'stock_sales_audit';
     $exists = $wpdb->get_var( $wpdb->prepare(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = %s", $table
     ) );
@@ -179,6 +211,35 @@ function wc_suf_maybe_upgrade_schema(){
       KEY `product_id` (`product_id`),
       KEY `batch_code` (`batch_code`),
       KEY `operation` (`operation`),
+      KEY `created_at` (`created_at`)
+    ) $charset;");
+
+    dbDelta("CREATE TABLE `$sales_audit_table` (
+      `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      `event_hash` CHAR(64) NOT NULL,
+      `order_id` BIGINT UNSIGNED NOT NULL,
+      `event_type` VARCHAR(32) NOT NULL,
+      `product_id` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      `variation_id` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+      `product_name` TEXT NULL,
+      `sku` VARCHAR(191) NULL,
+      `old_qty` DECIMAL(20,4) NOT NULL DEFAULT 0,
+      `new_qty` DECIMAL(20,4) NOT NULL DEFAULT 0,
+      `qty_diff` DECIMAL(20,4) NOT NULL DEFAULT 0,
+      `stock_source` VARCHAR(32) NOT NULL DEFAULT 'woocommerce',
+      `stock_before` DECIMAL(20,4) NULL,
+      `stock_after` DECIMAL(20,4) NULL,
+      `stock_delta` DECIMAL(20,4) NOT NULL DEFAULT 0,
+      `order_channel` VARCHAR(64) NULL,
+      `branch` VARCHAR(191) NULL,
+      `actor_user_id` BIGINT UNSIGNED NULL,
+      `meta_payload` LONGTEXT NULL,
+      `created_at` DATETIME NOT NULL,
+      PRIMARY KEY (`id`),
+      UNIQUE KEY `event_hash` (`event_hash`),
+      KEY `order_id` (`order_id`),
+      KEY `event_type` (`event_type`),
+      KEY `product_id` (`product_id`),
       KEY `created_at` (`created_at`)
     ) $charset;");
 
@@ -3684,3 +3745,343 @@ add_shortcode('stock_detailed_logs_formeditor', function($atts){
         'only_formeditor' => true,
     ]);
 });
+
+/**
+ * Sales audit logging for WooCommerce/YITH POS order stock movements.
+ * Inventory update logic remains owned by WooCommerce/YITH and is not altered here.
+ */
+if ( ! class_exists( 'WC_SUF_Order_Snapshot_Service' ) ) {
+    class WC_SUF_Order_Snapshot_Service {
+        private $meta_key = '_wc_suf_sales_audit_snapshot';
+
+        public function take_snapshot( $order ) {
+            if ( ! $order || ! is_a( $order, 'WC_Order' ) ) {
+                return [];
+            }
+            $items = [];
+            foreach ( $order->get_items( 'line_item' ) as $item_id => $item ) {
+                $product = $item->get_product();
+                $items[ (string) $item_id ] = [
+                    'item_id'       => (int) $item_id,
+                    'product_id'    => (int) $item->get_product_id(),
+                    'variation_id'  => (int) $item->get_variation_id(),
+                    'qty'           => (float) $item->get_quantity(),
+                    'name'          => (string) $item->get_name(),
+                    'sku'           => $product ? (string) $product->get_sku() : '',
+                ];
+            }
+            return $items;
+        }
+
+        public function save_before_edit_snapshot( $order_id ) {
+            $order = wc_get_order( $order_id );
+            if ( ! $order ) {
+                return;
+            }
+            $order->update_meta_data( $this->meta_key, wp_json_encode( $this->take_snapshot( $order ) ) );
+            $order->save_meta_data();
+        }
+
+        public function get_before_edit_snapshot( $order_id ) {
+            $order = wc_get_order( $order_id );
+            if ( ! $order ) {
+                return [];
+            }
+            $raw = $order->get_meta( $this->meta_key, true );
+            $decoded = json_decode( (string) $raw, true );
+            return is_array( $decoded ) ? $decoded : [];
+        }
+
+        public function clear_before_edit_snapshot( $order_id ) {
+            $order = wc_get_order( $order_id );
+            if ( ! $order ) {
+                return;
+            }
+            $order->delete_meta_data( $this->meta_key );
+            $order->save_meta_data();
+        }
+    }
+}
+
+if ( ! class_exists( 'WC_SUF_Order_Diff_Service' ) ) {
+    class WC_SUF_Order_Diff_Service {
+        public function diff_stock_affecting_items( array $before, array $after ) {
+            $changes = [];
+            $all_keys = array_unique( array_merge( array_keys( $before ), array_keys( $after ) ) );
+            foreach ( $all_keys as $item_key ) {
+                $prev = $before[ $item_key ] ?? null;
+                $next = $after[ $item_key ] ?? null;
+
+                $old_qty = $prev ? (float) ( $prev['qty'] ?? 0 ) : 0.0;
+                $new_qty = $next ? (float) ( $next['qty'] ?? 0 ) : 0.0;
+                $qty_diff = $new_qty - $old_qty;
+                if ( abs( $qty_diff ) < 0.0001 ) {
+                    continue;
+                }
+
+                $base = is_array( $next ) ? $next : $prev;
+                if ( ! is_array( $base ) ) {
+                    continue;
+                }
+                $changes[] = [
+                    'item_id'      => (int) ( $base['item_id'] ?? 0 ),
+                    'product_id'   => (int) ( $base['product_id'] ?? 0 ),
+                    'variation_id' => (int) ( $base['variation_id'] ?? 0 ),
+                    'product_name' => (string) ( $base['name'] ?? '' ),
+                    'sku'          => (string) ( $base['sku'] ?? '' ),
+                    'old_qty'      => $old_qty,
+                    'new_qty'      => $new_qty,
+                    'qty_diff'     => $qty_diff,
+                ];
+            }
+            return $changes;
+        }
+    }
+}
+
+if ( ! class_exists( 'WC_SUF_Stock_Source_Resolver' ) ) {
+    class WC_SUF_Stock_Source_Resolver {
+        public function resolve_for_order( $order ) {
+            $meta = [
+                'order_channel' => 'woocommerce',
+                'branch'        => '',
+                'stock_source'  => 'woocommerce',
+                'resolver_hint' => 'default',
+            ];
+
+            if ( ! $order || ! is_a( $order, 'WC_Order' ) ) {
+                return $meta;
+            }
+
+            $source = strtolower( (string) $order->get_meta( '_created_via', true ) );
+            if ( ! $source ) {
+                $source = strtolower( (string) $order->get_created_via() );
+            }
+            $is_pos_like = ( false !== strpos( $source, 'pos' ) || false !== strpos( $source, 'yith' ) );
+            if ( $is_pos_like ) {
+                $meta['order_channel'] = 'yith_pos';
+                $meta['stock_source'] = 'yith_pos';
+                $meta['resolver_hint'] = 'created_via';
+            }
+
+            $branch = $order->get_meta( '_yith_pos_store_name', true );
+            if ( ! $branch ) {
+                $branch = $order->get_meta( '_yith_pos_store_id', true );
+            }
+            if ( ! $branch ) {
+                // Extension point: map your custom branch meta here.
+                $branch = apply_filters( 'wc_suf_sales_audit_detect_branch', '', $order );
+            }
+            $meta['branch'] = is_scalar( $branch ) ? (string) $branch : '';
+
+            $resolved = apply_filters( 'wc_suf_sales_audit_resolved_source_meta', $meta, $order );
+            return is_array( $resolved ) ? array_merge( $meta, $resolved ) : $meta;
+        }
+
+        public function get_stock_qty( $product, $stock_source ) {
+            if ( ! $product || ! is_a( $product, 'WC_Product' ) ) {
+                return null;
+            }
+            if ( 'yith_pos' === $stock_source ) {
+                // Placeholder: without an order/store context YITH multi-stock is ambiguous.
+                // Integrators can provide exact quantity via filter.
+                return apply_filters( 'wc_suf_sales_audit_yith_stock_qty', null, $product );
+            }
+            $qty = $product->get_stock_quantity();
+            return null === $qty ? null : (float) $qty;
+        }
+    }
+}
+
+if ( ! class_exists( 'WC_SUF_Sales_Audit_Logger' ) ) {
+    class WC_SUF_Sales_Audit_Logger {
+        private $table;
+        private $snapshot_service;
+        private $diff_service;
+        private $source_resolver;
+
+        public function __construct( WC_SUF_Order_Snapshot_Service $snapshot_service, WC_SUF_Order_Diff_Service $diff_service, WC_SUF_Stock_Source_Resolver $source_resolver ) {
+            global $wpdb;
+            $this->table = $wpdb->prefix . 'stock_sales_audit';
+            $this->snapshot_service = $snapshot_service;
+            $this->diff_service = $diff_service;
+            $this->source_resolver = $source_resolver;
+        }
+
+        public function register_hooks() {
+            add_action( 'woocommerce_before_save_order_items', [ $this, 'capture_before_edit_snapshot' ], 10, 2 );
+            add_action( 'woocommerce_saved_order_items', [ $this, 'log_order_edit_stock_changes' ], 20, 2 );
+            add_action( 'woocommerce_reduce_order_stock', [ $this, 'log_sale_created_stock_changes' ], 20, 1 );
+        }
+
+        public function capture_before_edit_snapshot( $order_id ) {
+            $this->snapshot_service->save_before_edit_snapshot( (int) $order_id );
+        }
+
+        public function log_sale_created_stock_changes( $order ) {
+            if ( is_numeric( $order ) ) {
+                $order = wc_get_order( (int) $order );
+            }
+            if ( ! $order || ! is_a( $order, 'WC_Order' ) ) {
+                return;
+            }
+
+            $source_meta = $this->source_resolver->resolve_for_order( $order );
+            foreach ( $order->get_items( 'line_item' ) as $item_id => $item ) {
+                $qty = (float) $item->get_quantity();
+                if ( $qty <= 0 ) {
+                    continue;
+                }
+                $reduced = $item->get_meta( '_reduced_stock', true );
+                if ( '' !== $reduced && null !== $reduced && (float) $reduced <= 0 ) {
+                    continue;
+                }
+
+                $product = $item->get_product();
+                $stock_after = $this->source_resolver->get_stock_qty( $product, $source_meta['stock_source'] );
+                $stock_before = is_null( $stock_after ) ? null : ( $stock_after + $qty );
+                $this->insert_row( 'sale_created', $order, [
+                    'item_id'      => (int) $item_id,
+                    'product_id'   => (int) $item->get_product_id(),
+                    'variation_id' => (int) $item->get_variation_id(),
+                    'product_name' => (string) $item->get_name(),
+                    'sku'          => $product ? (string) $product->get_sku() : '',
+                    'old_qty'      => 0.0,
+                    'new_qty'      => $qty,
+                    'qty_diff'     => $qty,
+                ], $source_meta, $stock_before, $stock_after, -1 * $qty, [
+                    'hook'          => current_filter(),
+                    'order_item_id' => (int) $item_id,
+                    'reduced_stock' => ( '' === $reduced || null === $reduced ) ? null : (float) $reduced,
+                ] );
+            }
+        }
+
+        public function log_order_edit_stock_changes( $order_id ) {
+            $order = wc_get_order( (int) $order_id );
+            if ( ! $order ) {
+                return;
+            }
+
+            $before = $this->snapshot_service->get_before_edit_snapshot( (int) $order_id );
+            $after = $this->snapshot_service->take_snapshot( $order );
+            $changes = $this->diff_service->diff_stock_affecting_items( $before, $after );
+            $this->snapshot_service->clear_before_edit_snapshot( (int) $order_id );
+            if ( empty( $changes ) ) {
+                return;
+            }
+
+            $source_meta = $this->source_resolver->resolve_for_order( $order );
+            foreach ( $changes as $change ) {
+                $product = null;
+                if ( ! empty( $change['variation_id'] ) ) {
+                    $product = wc_get_product( (int) $change['variation_id'] );
+                }
+                if ( ! $product && ! empty( $change['product_id'] ) ) {
+                    $product = wc_get_product( (int) $change['product_id'] );
+                }
+
+                $qty_diff = (float) $change['qty_diff'];
+                $stock_after = $this->source_resolver->get_stock_qty( $product, $source_meta['stock_source'] );
+                $stock_before = is_null( $stock_after ) ? null : ( $stock_after + $qty_diff );
+                $stock_delta = -1 * $qty_diff;
+
+                if ( abs( $stock_delta ) < 0.0001 ) {
+                    continue;
+                }
+
+                $this->insert_row( 'order_edited', $order, $change, $source_meta, $stock_before, $stock_after, $stock_delta, [
+                    'hook' => current_filter(),
+                    'snapshot_keys' => [
+                        'before_count' => count( $before ),
+                        'after_count'  => count( $after ),
+                    ],
+                ] );
+            }
+        }
+
+        private function insert_row( $event_type, $order, array $change, array $source_meta, $stock_before, $stock_after, $stock_delta, array $meta_payload = [] ) {
+            global $wpdb;
+
+            $order_id = (int) $order->get_id();
+            $product_id = (int) ( $change['product_id'] ?? 0 );
+            $variation_id = (int) ( $change['variation_id'] ?? 0 );
+            $old_qty = (float) ( $change['old_qty'] ?? 0 );
+            $new_qty = (float) ( $change['new_qty'] ?? 0 );
+            $qty_diff = (float) ( $change['qty_diff'] ?? 0 );
+            if ( abs( $stock_delta ) < 0.0001 ) {
+                return false;
+            }
+
+            $payload = array_merge( [
+                'item_id'        => (int) ( $change['item_id'] ?? 0 ),
+                'event_source'   => current_filter(),
+                'order_status'   => (string) $order->get_status(),
+                'order_currency' => (string) $order->get_currency(),
+            ], $meta_payload );
+
+            $event_hash = hash( 'sha256', implode( '|', [
+                (string) $order_id,
+                (string) $event_type,
+                (string) $product_id,
+                (string) $variation_id,
+                (string) round( $old_qty, 4 ),
+                (string) round( $new_qty, 4 ),
+                (string) round( $qty_diff, 4 ),
+                (string) round( (float) $stock_delta, 4 ),
+                (string) ( $payload['item_id'] ?? 0 ),
+            ] ) );
+
+            $inserted = $wpdb->insert(
+                $this->table,
+                [
+                    'event_hash'    => $event_hash,
+                    'order_id'      => $order_id,
+                    'event_type'    => (string) $event_type,
+                    'product_id'    => $product_id,
+                    'variation_id'  => $variation_id,
+                    'product_name'  => (string) ( $change['product_name'] ?? '' ),
+                    'sku'           => (string) ( $change['sku'] ?? '' ),
+                    'old_qty'       => $old_qty,
+                    'new_qty'       => $new_qty,
+                    'qty_diff'      => $qty_diff,
+                    'stock_source'  => (string) ( $source_meta['stock_source'] ?? 'woocommerce' ),
+                    'stock_before'  => is_null( $stock_before ) ? null : (float) $stock_before,
+                    'stock_after'   => is_null( $stock_after ) ? null : (float) $stock_after,
+                    'stock_delta'   => (float) $stock_delta,
+                    'order_channel' => (string) ( $source_meta['order_channel'] ?? 'woocommerce' ),
+                    'branch'        => (string) ( $source_meta['branch'] ?? '' ),
+                    'actor_user_id' => get_current_user_id() ? (int) get_current_user_id() : null,
+                    'meta_payload'  => wp_json_encode( $payload ),
+                    'created_at'    => current_time( 'mysql' ),
+                ]
+            );
+
+            if ( false === $inserted && $wpdb->last_error ) {
+                $is_duplicate = false !== strpos( strtolower( $wpdb->last_error ), 'duplicate' );
+                if ( $is_duplicate ) {
+                    return false;
+                }
+            }
+            return false !== $inserted;
+        }
+    }
+}
+
+add_action( 'plugins_loaded', function() {
+    if ( ! function_exists( 'wc_get_order' ) ) {
+        return;
+    }
+    static $booted = false;
+    if ( $booted ) {
+        return;
+    }
+    $booted = true;
+
+    $logger = new WC_SUF_Sales_Audit_Logger(
+        new WC_SUF_Order_Snapshot_Service(),
+        new WC_SUF_Order_Diff_Service(),
+        new WC_SUF_Stock_Source_Resolver()
+    );
+    $logger->register_hooks();
+}, 30 );
