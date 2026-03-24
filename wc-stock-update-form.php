@@ -629,7 +629,11 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
         return;
     }
 
-    $order = wc_get_order( $order_id );
+    if ( is_object( $order_id ) && is_a( $order_id, 'WC_Order' ) ) {
+        $order = $order_id;
+    } else {
+        $order = wc_get_order( $order_id );
+    }
     if ( ! $order ) {
         return;
     }
@@ -702,7 +706,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
             [
                 'batch_code' => $order_number,
                 'operation' => 'sale',
-                'destination' => 'woocommerce',
+                'destination' => 'main',
                 'product_id' => $product_id,
                 'product_name' => $product_name,
                 'sku' => $product ? (string) $product->get_sku() : '',
@@ -762,6 +766,12 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     }
 }
 add_action( 'woocommerce_new_order', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_checkout_order_processed', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_store_api_checkout_order_processed', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_order_status_pending', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_order_status_on-hold', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_order_status_processing', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_order_status_completed', 'wc_suf_log_woocommerce_order_sale', 20 );
 
 function wc_suf_audit_op_type_for_storage( $op_type, $out_destination = '', $return_destination = '', $transfer_source = '', $transfer_destination = '' ) {
     if ( $op_type === 'out' ) {
