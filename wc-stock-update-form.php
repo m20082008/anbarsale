@@ -636,6 +636,82 @@ function wc_suf_get_order_item_reduced_stock_qty( $item ) {
     return (float) $reduced;
 }
 
+function wc_suf_is_yith_pos_order( $order ) {
+    if ( ! is_a( $order, 'WC_Order' ) ) {
+        return false;
+    }
+
+    $created_via = (string) $order->get_created_via();
+    if ( $created_via !== '' && strpos( strtolower( $created_via ), 'yith' ) !== false ) {
+        return true;
+    }
+
+    $meta_keys = [
+        '_yith_pos_order',
+        '_yith_pos_order_id',
+        '_yith_pos_register',
+        '_yith_pos_store',
+        '_ywpos_order',
+        '_ywpos_store',
+    ];
+    foreach ( $meta_keys as $meta_key ) {
+        $meta_value = $order->get_meta( $meta_key, true );
+        if ( $meta_value === '' || $meta_value === null ) {
+            continue;
+        }
+        if ( is_scalar( $meta_value ) && in_array( strtolower( (string) $meta_value ), [ '0', 'false', 'no' ], true ) ) {
+            continue;
+        }
+        return true;
+    }
+
+    $payment_method = (string) $order->get_payment_method();
+    if ( $payment_method !== '' && strpos( strtolower( $payment_method ), 'yith' ) !== false ) {
+        return true;
+    }
+
+    return false;
+}
+
+function wc_suf_get_order_stock_source( $order ) {
+    $is_pos = wc_suf_is_yith_pos_order( $order );
+    if ( $is_pos && function_exists( 'yith_pos_stock_management' ) ) {
+        return [
+            'is_pos'     => true,
+            'destination'=> 'teh',
+            'label'      => 'انبار تهرانپارس',
+            'store_id'   => (int) WC_SUF_TEHRANPARS_STORE_ID,
+        ];
+    }
+
+    return [
+        'is_pos'     => $is_pos,
+        'destination'=> 'main',
+        'label'      => 'انبار اصلی ووکامرس',
+        'store_id'   => 0,
+    ];
+}
+
+function wc_suf_get_order_stock_qty_by_source( $product, $stock_source ) {
+    if ( ! $product ) {
+        return 0.0;
+    }
+
+    $source_destination = (string) ( $stock_source['destination'] ?? 'main' );
+    if ( $source_destination === 'teh' ) {
+        $teh_qty = wc_suf_yith_get_store_stock_qty( $product, (int) WC_SUF_TEHRANPARS_STORE_ID );
+        if ( false !== $teh_qty ) {
+            return (float) $teh_qty;
+        }
+    }
+
+    $stock_qty = $product->get_stock_quantity();
+    if ( $stock_qty === null ) {
+        return 0.0;
+    }
+    return (float) $stock_qty;
+}
+
 function wc_suf_log_woocommerce_order_sale( $order_id ) {
     if ( ! function_exists('wc_get_order') ) {
         return;
@@ -677,6 +753,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     $customer_id = (int) $order->get_customer_id();
     $order_number = (string) $order->get_order_number();
     $created_at_mysql = current_time('mysql');
+    $stock_source = wc_suf_get_order_stock_source( $order );
 
     $logged_any_item = false;
     $receipt_rows = [];
@@ -700,13 +777,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
         }
 
         $product = wc_get_product( $product_id );
-        $current_stock = 0.0;
-        if ( $product ) {
-            $stock_qty = $product->get_stock_quantity();
-            if ( $stock_qty !== null ) {
-                $current_stock = (float) $stock_qty;
-            }
-        }
+        $current_stock = wc_suf_get_order_stock_qty_by_source( $product, $stock_source );
 
         $change_qty = -1 * $qty;
         $item_reduced_stock = wc_suf_get_order_item_reduced_stock_qty( $item );
@@ -726,7 +797,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
             [
                 'batch_code' => $order_number,
                 'operation' => 'sale',
-                'destination' => 'main',
+                'destination' => (string) $stock_source['destination'],
                 'product_id' => $product_id,
                 'product_name' => $product_name,
                 'sku' => $product ? (string) $product->get_sku() : '',
@@ -756,7 +827,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
                 'csv_file_url' => null,
                 'word_file_url'=> null,
                 'op_type'      => 'sale',
-                'purpose'      => 'سفارش ووکامرس',
+                'purpose'      => 'سفارش ووکامرس | ' . (string) $stock_source['label'],
                 'print_label'  => 0,
                 'product_id'   => $product_id,
                 'product_name' => $product_name,
@@ -788,7 +859,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     if ( $logged_any_item ) {
         $receipt_context = [
             'op_type'      => 'sale',
-            'purpose'      => 'سفارش ووکامرس',
+            'purpose'      => 'سفارش ووکامرس | ' . (string) $stock_source['label'],
             'user_display' => $customer_name,
             'user_code'    => $order_number,
             'created_at'   => $created_at_mysql,
@@ -847,6 +918,7 @@ function wc_suf_capture_order_stock_snapshot( $order ) {
         return [];
     }
 
+    $stock_source = wc_suf_get_order_stock_source( $order );
     $snapshot = [];
     $items = $order->get_items( 'line_item' );
     foreach ( $items as $item ) {
@@ -869,10 +941,7 @@ function wc_suf_capture_order_stock_snapshot( $order ) {
             continue;
         }
 
-        $stock_qty = $stock_product->get_stock_quantity();
-        if ( $stock_qty === null ) {
-            continue;
-        }
+        $stock_qty = wc_suf_get_order_stock_qty_by_source( $stock_product, $stock_source );
 
         $snapshot[ $managed_product_id ] = [
             'product_id'      => $managed_product_id,
@@ -883,6 +952,8 @@ function wc_suf_capture_order_stock_snapshot( $order ) {
             'parent_id'       => (int) $stock_product->get_parent_id(),
             'attributes_text' => wc_suf_get_product_attributes_text( $stock_product ),
             'qty'             => (float) $stock_qty,
+            'destination'     => (string) $stock_source['destination'],
+            'source_label'    => (string) $stock_source['label'],
         ];
     }
 
@@ -952,6 +1023,7 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
     $order_number = (string) $order->get_order_number();
     $batch_code = 'oder_edir_' . $order_number;
     $created_at_mysql = current_time( 'mysql' );
+    $stock_source = wc_suf_get_order_stock_source( $order );
 
     $current_user = wp_get_current_user();
     $user_id = get_current_user_id();
@@ -988,9 +1060,10 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
 
         $direction = ( $delta > 0 ) ? 'increase' : 'decrease';
         $purpose = sprintf(
-            'ویرایش سفارش #%s | %s موجودی اصلی ووکامرس | %s → %s',
+            'ویرایش سفارش #%s | %s %s | %s → %s',
             $order_number,
             ( $direction === 'increase' ? 'افزایش' : 'کاهش' ),
+            (string) $stock_source['label'],
             wc_format_decimal( $old_qty, 4 ),
             wc_format_decimal( $new_qty, 4 )
         );
@@ -1000,7 +1073,7 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
             [
                 'batch_code'           => $batch_code,
                 'operation'            => 'sale_edit',
-                'destination'          => 'main',
+                'destination'          => (string) $stock_source['destination'],
                 'product_id'           => (int) $meta['product_id'],
                 'product_name'         => (string) $meta['product_name'],
                 'sku'                  => (string) $meta['sku'],
