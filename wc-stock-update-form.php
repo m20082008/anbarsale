@@ -668,6 +668,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     $created_at_mysql = $created_at ? $created_at->date_i18n('Y-m-d H:i:s') : current_time('mysql');
 
     $logged_any_item = false;
+    $receipt_rows = [];
 
     foreach ( $items as $item ) {
         if ( ! is_a($item, 'WC_Order_Item_Product') ) {
@@ -757,10 +758,33 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
 
         if ( false !== $move_inserted && false !== $audit_inserted ) {
             $logged_any_item = true;
+            $receipt_rows[] = [
+                'id'   => $product_id,
+                'name' => $product_name,
+                'qty'  => $qty,
+            ];
         }
     }
 
     if ( $logged_any_item ) {
+        $receipt_context = [
+            'op_type'      => 'sale',
+            'purpose'      => 'سفارش ووکامرس',
+            'user_display' => $customer_name,
+            'user_code'    => $order_number,
+            'created_at'   => $created_at_mysql,
+        ];
+        $receipt_result = wc_suf_generate_batch_word_receipt( $order_number, $receipt_context, $receipt_rows );
+        if ( ! is_wp_error( $receipt_result ) && ! empty( $receipt_result['url'] ) ) {
+            $wpdb->query(
+                $wpdb->prepare(
+                    "UPDATE `$audit_table` SET `word_file_url` = %s WHERE `batch_code` = %s",
+                    (string) $receipt_result['url'],
+                    $order_number
+                )
+            );
+            $order->update_meta_data('_wc_suf_sale_receipt_html', (string) $receipt_result['url']);
+        }
         $order->update_meta_data('_wc_suf_sale_logged', 'yes');
         $order->save_meta_data();
     }
@@ -2963,7 +2987,7 @@ function wc_suf_render_audit_html($args = []){
                             <td><?php echo esc_html($user_disp); ?></td>
                             <td><?php echo esc_html($r->user_code ?: '—'); ?></td>
                             <td><?php echo esc_html($r->ip ?: ''); ?></td>
-                            <td><?php echo esc_html($r->created_at); ?></td>
+                            <td><?php echo esc_html( wc_suf_format_jalali_datetime($r->created_at) ); ?></td>
                         </tr>
                         <?php
                     }
@@ -3042,7 +3066,7 @@ function wc_suf_render_audit_html($args = []){
                             <td><?php echo esc_html($r->print_label ? 'بله' : 'خیر'); ?></td>
                             <td><?php echo esc_html($user_disp); ?></td>
                             <td><?php echo esc_html($r->user_code ?: '—'); ?></td>
-                            <td><?php echo esc_html($r->created_at); ?></td>
+                            <td><?php echo esc_html( wc_suf_format_jalali_datetime($r->created_at) ); ?></td>
                         </tr>
                         <?php
                     }
