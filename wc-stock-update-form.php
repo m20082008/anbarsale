@@ -592,6 +592,7 @@ function wc_suf_yith_change_store_stock( $product, $qty, $store_id, $operation =
 | Helpers (برچسب عملیات و کد ثبت ترتیبی)
 ---------------------------------------*/
 function wc_suf_op_label($op){
+    if ($op === 'order_edit') return 'ویرایش سفارش';
     if ($op === 'return_production') return 'مرجوعی به انبار تولید';
     if ($op === 'return_main') return 'مرجوعی به انبار اصلی';
     if ($op === 'return_teh')  return 'مرجوعی به تهرانپارس';
@@ -633,6 +634,107 @@ function wc_suf_get_order_item_reduced_stock_qty( $item ) {
         return null;
     }
     return (float) $reduced;
+}
+
+function wc_suf_log_woocommerce_order_stock_change( $order, $item, $change_qty, $created_at_mysql = '' ) {
+    if ( ! $order || ! $item || 0.0 === (float) $change_qty ) {
+        return;
+    }
+
+    global $wpdb;
+    $move_table  = $wpdb->prefix . 'stock_production_moves';
+    $audit_table = $wpdb->prefix . 'stock_audit';
+
+    $product_id = (int) $item->get_variation_id();
+    if ( $product_id <= 0 ) {
+        $product_id = (int) $item->get_product_id();
+    }
+    if ( $product_id <= 0 ) {
+        return;
+    }
+
+    $product = wc_get_product( $product_id );
+    if ( ! $product ) {
+        return;
+    }
+
+    $order_number = (string) $order->get_order_number();
+    if ( $order_number === '' ) {
+        $order_number = (string) $order->get_id();
+    }
+
+    $customer_name = trim( (string) $order->get_formatted_billing_full_name() );
+    if ( $customer_name === '' ) {
+        $customer_name = trim( (string) $order->get_shipping_first_name() . ' ' . (string) $order->get_shipping_last_name() );
+    }
+    if ( $customer_name === '' ) {
+        $customer_name = (string) $order->get_billing_email();
+    }
+    if ( $customer_name === '' ) {
+        $customer_name = 'ویرایش سفارش ووکامرس';
+    }
+
+    $new_qty = (float) ( $product->get_stock_quantity() ?? 0 );
+    $old_qty = $new_qty - (float) $change_qty;
+    $product_name = (string) ( $item->get_name() ?: $product->get_name() );
+
+    if ( $created_at_mysql === '' ) {
+        $created_at_mysql = current_time( 'mysql' );
+    }
+
+    $wpdb->insert(
+        $move_table,
+        [
+            'batch_code' => $order_number,
+            'operation' => 'order_edit',
+            'destination' => 'main',
+            'product_id' => $product_id,
+            'product_name' => $product_name,
+            'sku' => (string) $product->get_sku(),
+            'product_type' => (string) $product->get_type(),
+            'parent_id' => (int) $product->get_parent_id(),
+            'attributes_text' => wc_suf_get_product_attributes_text( $product ),
+            'old_qty' => $old_qty,
+            'change_qty' => (float) $change_qty,
+            'new_qty' => $new_qty,
+            'destination_old_qty' => null,
+            'destination_new_qty' => null,
+            'user_id' => (int) $order->get_customer_id() ?: null,
+            'user_login' => $customer_name,
+            'user_code' => $order_number,
+            'created_at' => $created_at_mysql,
+        ],
+        [
+            '%s','%s','%s','%d','%s','%s','%s','%d','%s',
+            '%f','%f','%f','%f','%f','%d','%s','%s','%s'
+        ]
+    );
+
+    $wpdb->insert(
+        $audit_table,
+        [
+            'batch_code'   => $order_number,
+            'csv_file_url' => null,
+            'word_file_url'=> null,
+            'op_type'      => 'order_edit',
+            'purpose'      => 'ویرایش سفارش مقصد انبار اصلی',
+            'print_label'  => 0,
+            'product_id'   => $product_id,
+            'product_name' => $product_name,
+            'old_qty'      => $old_qty,
+            'added_qty'    => (float) $change_qty,
+            'new_qty'      => $new_qty,
+            'user_id'      => (int) $order->get_customer_id() ?: null,
+            'user_login'   => $customer_name,
+            'user_code'    => $order_number,
+            'ip'           => '',
+            'created_at'   => $created_at_mysql,
+        ],
+        [
+            '%s','%s','%s','%s','%s','%d','%d','%s','%f',
+            '%f','%f','%d','%s','%s','%s','%s'
+        ]
+    );
 }
 
 function wc_suf_log_woocommerce_order_sale( $order_id ) {
@@ -678,7 +780,6 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     $created_at_mysql = current_time('mysql');
 
     $logged_any_item = false;
-    $receipt_rows = [];
 
     foreach ( $items as $item ) {
         if ( ! is_a($item, 'WC_Order_Item_Product') ) {
@@ -776,33 +877,10 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
 
         if ( false !== $move_inserted && false !== $audit_inserted ) {
             $logged_any_item = true;
-            $receipt_rows[] = [
-                'id'   => $product_id,
-                'name' => $product_name,
-                'qty'  => $qty,
-            ];
         }
     }
 
     if ( $logged_any_item ) {
-        $receipt_context = [
-            'op_type'      => 'sale',
-            'purpose'      => 'سفارش ووکامرس',
-            'user_display' => $customer_name,
-            'user_code'    => $order_number,
-            'created_at'   => $created_at_mysql,
-        ];
-        $receipt_result = wc_suf_generate_batch_word_receipt( $order_number, $receipt_context, $receipt_rows );
-        if ( ! is_wp_error( $receipt_result ) && ! empty( $receipt_result['url'] ) ) {
-            $wpdb->query(
-                $wpdb->prepare(
-                    "UPDATE `$audit_table` SET `word_file_url` = %s WHERE `batch_code` = %s",
-                    (string) $receipt_result['url'],
-                    $order_number
-                )
-            );
-            $order->update_meta_data('_wc_suf_sale_receipt_html', (string) $receipt_result['url']);
-        }
         $order->update_meta_data('_wc_suf_sale_logged', 'yes');
         $order->save_meta_data();
     }
@@ -814,6 +892,34 @@ add_action( 'woocommerce_order_status_pending', 'wc_suf_log_woocommerce_order_sa
 add_action( 'woocommerce_order_status_on-hold', 'wc_suf_log_woocommerce_order_sale', 20 );
 add_action( 'woocommerce_order_status_processing', 'wc_suf_log_woocommerce_order_sale', 20 );
 add_action( 'woocommerce_order_status_completed', 'wc_suf_log_woocommerce_order_sale', 20 );
+
+add_action( 'woocommerce_reduce_order_item_stock', function( $item, $change, $order ) {
+    if ( ! is_a( $item, 'WC_Order_Item_Product' ) || ! is_a( $order, 'WC_Order' ) ) {
+        return;
+    }
+    if ( 'yes' !== $order->get_meta('_wc_suf_sale_logged', true) ) {
+        return;
+    }
+    $change = (float) $change;
+    if ( $change <= 0 ) {
+        return;
+    }
+    wc_suf_log_woocommerce_order_stock_change( $order, $item, -1 * $change );
+}, 20, 3 );
+
+add_action( 'woocommerce_restore_order_item_stock', function( $item, $change, $order ) {
+    if ( ! is_a( $item, 'WC_Order_Item_Product' ) || ! is_a( $order, 'WC_Order' ) ) {
+        return;
+    }
+    if ( 'yes' !== $order->get_meta('_wc_suf_sale_logged', true) ) {
+        return;
+    }
+    $change = (float) $change;
+    if ( $change <= 0 ) {
+        return;
+    }
+    wc_suf_log_woocommerce_order_stock_change( $order, $item, $change );
+}, 20, 3 );
 
 function wc_suf_audit_op_type_for_storage( $op_type, $out_destination = '', $return_destination = '', $transfer_source = '', $transfer_destination = '' ) {
     if ( $op_type === 'out' ) {
@@ -3187,7 +3293,7 @@ function wc_suf_get_detailed_logs_rows( $filters, $limit = 100, $apply_limit = t
         $params[] = $batch_filter;
     }
 
-    if ( in_array( $op_filter, ['in','out','transfer','return','sale','onlyLabel'], true ) ) {
+    if ( in_array( $op_filter, ['in','out','transfer','return','sale','order_edit','onlyLabel'], true ) ) {
         $where[] = 'm.operation = %s';
         $params[] = $op_filter;
     }
@@ -3262,7 +3368,7 @@ function wc_suf_get_detailed_logs_total_count( $filters ) {
         $where[] = 'm.batch_code = %s';
         $params[] = $batch_filter;
     }
-    if ( in_array( $op_filter, ['in','out','transfer','return','sale','onlyLabel'], true ) ) {
+    if ( in_array( $op_filter, ['in','out','transfer','return','sale','order_edit','onlyLabel'], true ) ) {
         $where[] = 'm.operation = %s';
         $params[] = $op_filter;
     }
@@ -3513,6 +3619,7 @@ function wc_suf_render_detailed_logs_html( $args = [] ) {
                     <option value="transfer" <?php selected($op_filter, 'transfer'); ?>>انتقال بین انبارها</option>
                     <option value="return" <?php selected($op_filter, 'return'); ?>>مرجوعی</option>
                     <option value="sale" <?php selected($op_filter, 'sale'); ?>>فروش</option>
+                    <option value="order_edit" <?php selected($op_filter, 'order_edit'); ?>>ویرایش سفارش</option>
                     <option value="onlyLabel" <?php selected($op_filter, 'onlyLabel'); ?>>صرفاً جهت چاپ</option>
                 </select>
             </div>
