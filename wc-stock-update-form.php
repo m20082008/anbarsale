@@ -629,7 +629,11 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
         return;
     }
 
-    $order = wc_get_order( $order_id );
+    if ( is_object( $order_id ) && is_a( $order_id, 'WC_Order' ) ) {
+        $order = $order_id;
+    } else {
+        $order = wc_get_order( $order_id );
+    }
     if ( ! $order ) {
         return;
     }
@@ -640,8 +644,6 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
 
     $items = $order->get_items( 'line_item' );
     if ( empty($items) ) {
-        $order->update_meta_data('_wc_suf_sale_logged', 'yes');
-        $order->save_meta_data();
         return;
     }
 
@@ -664,6 +666,8 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     $order_number = (string) $order->get_order_number();
     $created_at = $order->get_date_created();
     $created_at_mysql = $created_at ? $created_at->date_i18n('Y-m-d H:i:s') : current_time('mysql');
+
+    $logged_any_item = false;
 
     foreach ( $items as $item ) {
         if ( ! is_a($item, 'WC_Order_Item_Product') ) {
@@ -697,12 +701,12 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
         $change_qty = -1 * $qty;
         $product_name = (string) ( $item->get_name() ?: ( $product ? $product->get_name() : '' ) );
 
-        $wpdb->insert(
+        $move_inserted = $wpdb->insert(
             $move_table,
             [
                 'batch_code' => $order_number,
                 'operation' => 'sale',
-                'destination' => 'woocommerce',
+                'destination' => 'main',
                 'product_id' => $product_id,
                 'product_name' => $product_name,
                 'sku' => $product ? (string) $product->get_sku() : '',
@@ -725,7 +729,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
             ]
         );
 
-        $wpdb->insert(
+        $audit_inserted = $wpdb->insert(
             $audit_table,
             [
                 'batch_code'   => $order_number,
@@ -750,12 +754,24 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
                 '%f','%f','%d','%s','%s','%s','%s'
             ]
         );
+
+        if ( false !== $move_inserted && false !== $audit_inserted ) {
+            $logged_any_item = true;
+        }
     }
 
-    $order->update_meta_data('_wc_suf_sale_logged', 'yes');
-    $order->save_meta_data();
+    if ( $logged_any_item ) {
+        $order->update_meta_data('_wc_suf_sale_logged', 'yes');
+        $order->save_meta_data();
+    }
 }
 add_action( 'woocommerce_new_order', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_checkout_order_processed', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_store_api_checkout_order_processed', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_order_status_pending', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_order_status_on-hold', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_order_status_processing', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_order_status_completed', 'wc_suf_log_woocommerce_order_sale', 20 );
 
 function wc_suf_audit_op_type_for_storage( $op_type, $out_destination = '', $return_destination = '', $transfer_source = '', $transfer_destination = '' ) {
     if ( $op_type === 'out' ) {
