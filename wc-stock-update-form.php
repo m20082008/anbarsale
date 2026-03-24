@@ -897,7 +897,7 @@ function wc_suf_generate_batch_label_html( $batch_code, $rows ) {
 
 function wc_suf_generate_batch_word_receipt( $batch_code, $context, $rows ) {
     if ( empty($rows) || ! is_array($rows) ) {
-        return new WP_Error( 'word_empty', 'داده‌ای برای ساخت رسید Word وجود ندارد.' );
+        return new WP_Error( 'word_empty', 'داده‌ای برای ساخت رسید HTML وجود ندارد.' );
     }
 
     $upload = wp_upload_dir();
@@ -907,11 +907,11 @@ function wc_suf_generate_batch_word_receipt( $batch_code, $context, $rows ) {
 
     $dir = trailingslashit( $upload['basedir'] ) . 'wc-suf-exports';
     if ( ! wp_mkdir_p( $dir ) ) {
-        return new WP_Error( 'word_mkdir_failed', 'ساخت پوشه فایل‌های Word ناموفق بود.' );
+        return new WP_Error( 'word_mkdir_failed', 'ساخت پوشه فایل‌های رسید HTML ناموفق بود.' );
     }
 
     $safe_batch = preg_replace('/[^A-Za-z0-9_\-]/', '_', (string) $batch_code );
-    $filename   = sprintf( '%s-%s.doc', $safe_batch, wp_generate_password(6, false, false) );
+    $filename   = sprintf( '%s-%s-receipt.html', $safe_batch, wp_generate_password(6, false, false) );
     $filepath   = trailingslashit( $dir ) . $filename;
     $fileurl    = trailingslashit( $upload['baseurl'] ) . 'wc-suf-exports/' . $filename;
 
@@ -958,7 +958,7 @@ function wc_suf_generate_batch_word_receipt( $batch_code, $context, $rows ) {
 
     $bytes = file_put_contents( $filepath, $html );
     if ( false === $bytes ) {
-        return new WP_Error( 'word_write_failed', 'ایجاد فایل Word ناموفق بود.' );
+        return new WP_Error( 'word_write_failed', 'ایجاد فایل رسید HTML ناموفق بود.' );
     }
 
     return [ 'path' => $filepath, 'url' => $fileurl ];
@@ -2097,6 +2097,7 @@ add_shortcode('stock_update_form', function($atts){
         });
 
         $('input[name="op-type"]').on('change', function(){
+            $('#save-result').hide().empty();
             if(opType) return;
             opType = $(this).val();
 
@@ -2312,7 +2313,7 @@ add_shortcode('stock_update_form', function($atts){
                                 html += '<div style="margin-top:8px"><a href="'+csvUrl+'" target="_blank" rel="noopener" style="color:#1d4ed8; font-weight:700">چاپ لیبل (HTML)</a></div>';
                             }
                             if(wordUrl){
-                                html += '<div style="margin-top:8px"><a href="'+wordUrl+'" target="_blank" rel="noopener" style="color:#1d4ed8; font-weight:700">دانلود رسید Word عملیات</a></div>';
+                                html += '<div style="margin-top:8px"><a href="'+wordUrl+'" target="_blank" rel="noopener" style="color:#1d4ed8; font-weight:700">دانلود رسید عملیات (HTML)</a></div>';
                             }
                             $('#save-result').html(html).show();
                             alert(msg);
@@ -2801,7 +2802,7 @@ function wc_suf_save_stock_update_handler(){
             if ( $tx_started ) {
                 $wpdb->query('ROLLBACK');
             }
-            wp_send_json_error(['message'=>'ساخت فایل Word ناموفق بود: '.$word_result->get_error_message()]);
+            wp_send_json_error(['message'=>'ساخت فایل رسید HTML ناموفق بود: '.$word_result->get_error_message()]);
         }
 
         $word_file_url = (string) ( $word_result['url'] ?? '' );
@@ -2819,7 +2820,7 @@ function wc_suf_save_stock_update_handler(){
             if ( $tx_started ) {
                 $wpdb->query('ROLLBACK');
             }
-            wp_send_json_error(['message'=>'ثبت لینک Word در دیتابیس ناموفق بود.']);
+            wp_send_json_error(['message'=>'ثبت لینک رسید HTML در دیتابیس ناموفق بود.']);
         }
     }
 
@@ -3506,7 +3507,7 @@ function wc_suf_render_detailed_logs_html( $args = [] ) {
 
         <table class="widefat fixed striped">
             <thead><tr>
-                <th>#</th><th>کد عملیات</th><th>عملیات</th><th>مقصد</th><th>ID</th><th>نام محصول</th><th>قبل</th><th>تغییر</th><th>بعد</th><th>کاربر</th><th>تاریخ (شمسی)</th><th>چاپ لیبل</th><th>Word</th>
+                <th>#</th><th>کد عملیات</th><th>عملیات</th><th>مقصد</th><th>ID</th><th>نام محصول</th><th>قبل</th><th>تغییر</th><th>بعد</th><th>کاربر</th><th>تاریخ (شمسی)</th><th>چاپ لیبل</th><th>رسید HTML</th>
             </tr></thead>
             <tbody>
             <?php if ( ! empty($rows) ) : foreach($rows as $r):
