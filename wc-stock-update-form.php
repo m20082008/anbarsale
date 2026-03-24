@@ -964,6 +964,7 @@ function wc_suf_generate_batch_word_receipt( $batch_code, $context, $rows ) {
     $created   = (string) ($context['created_at'] ?? current_time('mysql'));
     $jalali    = wc_suf_format_jalali_datetime($created);
     $op_label  = wc_suf_op_label($op_type);
+    $is_sale   = ( $op_type === 'sale' );
 
     $sum = 0;
     $rows_html = '';
@@ -989,11 +990,11 @@ function wc_suf_generate_batch_word_receipt( $batch_code, $context, $rows ) {
         . '</style></head><body>'
         . '<div class="box">'
         . '<h1>رسید ' . esc_html($op_label) . '</h1>'
-        . '<div class="meta"><strong>کد عملیات:</strong> ' . esc_html($batch_code) . '</div>'
-        . '<div class="meta"><strong>تاریخ:</strong> ' . esc_html($jalali) . '</div>'
-        . '<div class="meta"><strong>کاربر:</strong> ' . esc_html($user_disp ?: 'مهمان') . '</div>'
-        . '<div class="meta"><strong>کد کاربر:</strong> ' . esc_html($user_code ?: '—') . '</div>'
-        . '<div class="meta"><strong>توضیحات:</strong> ' . esc_html($purpose ?: '—') . '</div>'
+        . '<div class="meta"><strong>' . esc_html( $is_sale ? 'شماره سفارش:' : 'کد عملیات:' ) . '</strong> ' . esc_html($batch_code) . '</div>'
+        . '<div class="meta"><strong>' . esc_html( $is_sale ? 'تاریخ و ساعت:' : 'تاریخ:' ) . '</strong> ' . esc_html($jalali) . '</div>'
+        . '<div class="meta"><strong>' . esc_html( $is_sale ? 'فروشنده:' : 'کاربر:' ) . '</strong> ' . esc_html($user_disp ?: 'مهمان') . '</div>'
+        . ( $is_sale ? '' : '<div class="meta"><strong>کد کاربر:</strong> ' . esc_html($user_code ?: '—') . '</div>' )
+        . ( $is_sale ? '' : '<div class="meta"><strong>توضیحات:</strong> ' . esc_html($purpose ?: '—') . '</div>' )
         . '<div class="meta"><strong>تعداد اقلام:</strong> ' . esc_html( (string) count($rows) ) . ' | <strong>جمع تعداد:</strong> ' . esc_html( (string) $sum ) . '</div>'
         . '<table><thead><tr><th>#</th><th>ID</th><th>نام محصول</th><th>تعداد</th></tr></thead><tbody>' . $rows_html . '</tbody></table>'
         . '</div></body></html>';
