@@ -731,7 +731,7 @@ function wc_suf_get_order_stock_source( $order ) {
         ];
     }
 
-    if ( $is_pos ) {
+    if ( $is_pos && function_exists( 'yith_pos_stock_management' ) ) {
         return [
             'is_pos'     => true,
             'destination'=> 'teh',
