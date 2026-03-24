@@ -636,6 +636,21 @@ function wc_suf_get_order_item_reduced_stock_qty( $item ) {
     return (float) $reduced;
 }
 
+
+function wc_suf_meta_truthy( $value ) {
+    if ( is_bool( $value ) ) {
+        return $value;
+    }
+    if ( is_numeric( $value ) ) {
+        return ( (float) $value ) > 0;
+    }
+    $normalized = strtolower( trim( (string) $value ) );
+    if ( $normalized === '' ) {
+        return false;
+    }
+    return ! in_array( $normalized, [ '0', 'false', 'no', 'off', 'null' ], true );
+}
+
 function wc_suf_is_yith_pos_order( $order ) {
     if ( ! is_a( $order, 'WC_Order' ) ) {
         return false;
@@ -676,19 +691,42 @@ function wc_suf_is_yith_pos_order( $order ) {
 function wc_suf_get_order_stock_source( $order ) {
     $is_pos = wc_suf_is_yith_pos_order( $order );
 
+    $yith_pos_order_flag = wc_suf_meta_truthy( $order->get_meta( '_yith_pos_order', true ) ) || wc_suf_meta_truthy( $order->get_meta( '_ywpos_order', true ) );
+
+    $pos_store_id = (int) $order->get_meta( '_yith_pos_store', true );
+    if ( $pos_store_id <= 0 ) {
+        $pos_store_id = (int) $order->get_meta( '_ywpos_store', true );
+    }
+
     $reduced_stock_store_id = (int) $order->get_meta( '_yith_pos_reduced_stock_by_store', true );
     if ( $reduced_stock_store_id <= 0 ) {
         $reduced_stock_store_id = (int) $order->get_meta( '_ywpos_reduced_stock_by_store', true );
     }
 
-    $is_tehranpars_store = ( $reduced_stock_store_id > 0 && $reduced_stock_store_id === (int) WC_SUF_TEHRANPARS_STORE_ID );
+    $tehranpars_store_id = (int) WC_SUF_TEHRANPARS_STORE_ID;
+    $is_tehranpars_store = ( $reduced_stock_store_id > 0 && $reduced_stock_store_id === $tehranpars_store_id );
 
-    if ( ( $is_tehranpars_store || $is_pos ) && function_exists( 'yith_pos_stock_management' ) ) {
+    if ( ! $is_tehranpars_store && $yith_pos_order_flag ) {
+        if ( $pos_store_id <= 0 || $pos_store_id === $tehranpars_store_id ) {
+            $is_tehranpars_store = true;
+        }
+    }
+
+    if ( $is_tehranpars_store ) {
         return [
             'is_pos'     => true,
             'destination'=> 'teh',
             'label'      => 'انبار تهرانپارس',
-            'store_id'   => (int) WC_SUF_TEHRANPARS_STORE_ID,
+            'store_id'   => $tehranpars_store_id,
+        ];
+    }
+
+    if ( $is_pos && function_exists( 'yith_pos_stock_management' ) ) {
+        return [
+            'is_pos'     => true,
+            'destination'=> 'teh',
+            'label'      => 'انبار تهرانپارس',
+            'store_id'   => $tehranpars_store_id,
         ];
     }
 
