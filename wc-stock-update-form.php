@@ -2951,194 +2951,6 @@ function wc_suf_collect_detailed_log_filters() {
     ];
 }
 
-function wc_suf_order_has_yith_pos_marker( $order ) {
-    if ( ! $order || ! is_object( $order ) || ! method_exists( $order, 'get_meta_data' ) ) {
-        return false;
-    }
-
-    $created_via = strtolower( (string) $order->get_created_via() );
-    if ( $created_via !== '' && ( strpos( $created_via, 'yith' ) !== false || strpos( $created_via, 'pos' ) !== false ) ) {
-        return true;
-    }
-
-    foreach ( (array) $order->get_meta_data() as $meta_obj ) {
-        if ( ! is_object( $meta_obj ) || ! method_exists( $meta_obj, 'get_data' ) ) {
-            continue;
-        }
-        $meta = (array) $meta_obj->get_data();
-        $key  = strtolower( (string) ( $meta['key'] ?? '' ) );
-        $val  = strtolower( (string) ( $meta['value'] ?? '' ) );
-
-        if ( strpos( $key, 'yith' ) !== false && strpos( $key, 'pos' ) !== false ) {
-            return true;
-        }
-        if ( strpos( $val, 'yith' ) !== false && strpos( $val, 'pos' ) !== false ) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function wc_suf_detect_sale_channel( $order ) {
-    $created_via = strtolower( (string) $order->get_created_via() );
-
-    if ( wc_suf_order_has_yith_pos_marker( $order ) ) {
-        return [
-            'channel' => 'yith_pos',
-            'label'   => 'فروش حضوری تهرانپارس (YITH POS)',
-            'warehouse' => 'انبار تهرانپارس',
-        ];
-    }
-
-    if ( $created_via === 'admin' ) {
-        return [
-            'channel' => 'manual_order',
-            'label'   => 'افزودن دستی سفارش در ووکامرس',
-            'warehouse' => 'انبار اصلی',
-        ];
-    }
-
-    if ( $created_via === 'wc_suf' || (string) $order->get_meta('_wc_suf_sale_source', true) !== '' ) {
-        return [
-            'channel' => 'wc_suf_sale',
-            'label'   => 'فروش ثبت‌شده از افزونه انبار',
-            'warehouse' => 'انبار اصلی',
-        ];
-    }
-
-    return [
-        'channel' => 'website',
-        'label'   => 'فروش عادی وب‌سایت',
-        'warehouse' => 'انبار اصلی',
-    ];
-}
-
-function wc_suf_get_woocommerce_sales_rows( $filters, $limit = 500 ) {
-    if ( ! function_exists( 'wc_get_orders' ) ) {
-        return [];
-    }
-
-    $op_filter = (string) ( $filters['op'] ?? '' );
-    if ( $op_filter !== '' && $op_filter !== 'sale' ) {
-        return [];
-    }
-
-    $q = trim( (string) ( $filters['q'] ?? '' ) );
-    $from = (string) ( $filters['from'] ?? '' );
-    $to = (string) ( $filters['to'] ?? '' );
-    $pid_filter = (int) ( $filters['product_id'] ?? 0 );
-    $uid_filter = (int) ( $filters['user_id'] ?? 0 );
-
-    $statuses = array_keys( (array) wc_get_order_statuses() );
-    $statuses = array_values( array_filter( $statuses, static function( $status ) {
-        return ! in_array( $status, [ 'wc-cancelled', 'wc-failed', 'wc-refunded', 'wc-trash' ], true );
-    } ) );
-
-    $args = [
-        'type' => 'shop_order',
-        'status' => ! empty( $statuses ) ? $statuses : [ 'wc-processing', 'wc-completed' ],
-        'limit' => (int) $limit,
-        'orderby' => 'date',
-        'order' => 'DESC',
-        'return' => 'objects',
-    ];
-
-    if ( preg_match('/^\d{4}-\d{2}-\d{2}$/', $from) || preg_match('/^\d{4}-\d{2}-\d{2}$/', $to) ) {
-        $after  = preg_match('/^\d{4}-\d{2}-\d{2}$/', $from) ? $from . ' 00:00:00' : null;
-        $before = preg_match('/^\d{4}-\d{2}-\d{2}$/', $to) ? $to . ' 23:59:59' : null;
-        $range = [];
-        if ( $after )  $range['after'] = $after;
-        if ( $before ) $range['before'] = $before;
-        if ( ! empty( $range ) ) {
-            $range['inclusive'] = true;
-            $args['date_created'] = $range;
-        }
-    }
-
-    if ( $uid_filter > 0 ) {
-        $args['customer_id'] = $uid_filter;
-    }
-
-    if ( $q !== '' && ctype_digit( $q ) ) {
-        $args['search'] = '#' . $q;
-    } elseif ( $q !== '' ) {
-        $args['search'] = '*' . $q . '*';
-    }
-
-    $orders = wc_get_orders( $args );
-    if ( empty( $orders ) ) {
-        return [];
-    }
-
-    $rows = [];
-    foreach ( (array) $orders as $order ) {
-        if ( ! $order || ! is_object( $order ) ) {
-            continue;
-        }
-        $channel = wc_suf_detect_sale_channel( $order );
-        $created = $order->get_date_created();
-        $created_at = $created ? $created->date_i18n('Y-m-d H:i:s') : '';
-
-        foreach ( (array) $order->get_items('line_item') as $item_id => $item ) {
-            if ( ! $item || ! is_object( $item ) ) {
-                continue;
-            }
-            $product_id = (int) $item->get_product_id();
-            $variation_id = (int) $item->get_variation_id();
-            $effective_product_id = $variation_id > 0 ? $variation_id : $product_id;
-            if ( $pid_filter > 0 && $pid_filter !== $effective_product_id ) {
-                continue;
-            }
-            $qty = (float) $item->get_quantity();
-            if ( $qty <= 0 ) {
-                continue;
-            }
-            $product_name = (string) $item->get_name();
-            if ( $q !== '' && ! ctype_digit( $q ) ) {
-                $needle = function_exists('mb_strtolower') ? mb_strtolower($q, 'UTF-8') : strtolower($q);
-                $hay_product = function_exists('mb_strtolower') ? mb_strtolower($product_name, 'UTF-8') : strtolower($product_name);
-                $hay_channel = function_exists('mb_strtolower') ? mb_strtolower($channel['label'], 'UTF-8') : strtolower($channel['label']);
-                $hay_order = (string) $order->get_order_number();
-                if ( strpos($hay_product, $needle) === false && strpos($hay_channel, $needle) === false && strpos($hay_order, $needle) === false ) {
-                    continue;
-                }
-            }
-
-            $customer_title = '';
-            if ( $order->get_user_id() > 0 ) {
-                $customer_title = 'user#' . $order->get_user_id();
-            } else {
-                $customer_title = trim( (string) $order->get_billing_first_name() . ' ' . (string) $order->get_billing_last_name() );
-                if ( $customer_title === '' ) {
-                    $customer_title = 'مشتری مهمان';
-                }
-            }
-
-            $rows[] = (object) [
-                'id' => 'sale-' . $order->get_id() . '-' . $item_id,
-                'batch_code' => 'order_' . $order->get_order_number(),
-                'operation' => 'sale',
-                'destination' => (string) $channel['warehouse'],
-                'product_id' => $effective_product_id,
-                'product_name' => $product_name,
-                'old_qty' => null,
-                'change_qty' => -1 * $qty,
-                'new_qty' => null,
-                'user_login' => $customer_title,
-                'user_id' => $order->get_user_id() > 0 ? (int) $order->get_user_id() : null,
-                'created_at' => $created_at,
-                'csv_file_url' => '',
-                'word_file_url' => '',
-                'sale_channel' => (string) $channel['label'],
-                'order_status' => wc_get_order_status_name( $order->get_status() ),
-            ];
-        }
-    }
-
-    return $rows;
-}
-
 function wc_suf_get_detailed_logs_rows( $filters, $limit = 500, $apply_limit = true ) {
     global $wpdb;
     $move_table = $wpdb->prefix.'stock_production_moves';
@@ -3381,7 +3193,6 @@ function wc_suf_render_detailed_logs_html( $args = [] ) {
 
     $limit = 500;
     $rows = wc_suf_get_detailed_logs_rows( $filters, $limit, true );
-    $sales_rows = wc_suf_get_woocommerce_sales_rows( $filters, $limit );
     $batch_codes = $wpdb->get_col( "SELECT DISTINCT batch_code FROM `$move_table` WHERE batch_code IS NOT NULL AND batch_code<>'' ORDER BY id DESC LIMIT 1000" );
     $products_for_filter = $wpdb->get_results( "SELECT product_id, MAX(product_name) AS product_name FROM `$move_table` GROUP BY product_id ORDER BY MAX(id) DESC LIMIT 2000" );
     $users_for_filter = $wpdb->get_results( "SELECT user_id, MAX(user_login) AS user_login FROM `$move_table` WHERE user_id IS NOT NULL AND user_id > 0 GROUP BY user_id ORDER BY MAX(id) DESC LIMIT 500" );
@@ -3428,7 +3239,6 @@ function wc_suf_render_detailed_logs_html( $args = [] ) {
                     <option value="transfer" <?php selected($op_filter, 'transfer'); ?>>انتقال بین انبارها</option>
                     <option value="return" <?php selected($op_filter, 'return'); ?>>مرجوعی</option>
                     <option value="onlyLabel" <?php selected($op_filter, 'onlyLabel'); ?>>صرفاً جهت چاپ</option>
-                    <option value="sale" <?php selected($op_filter, 'sale'); ?>>فروش ووکامرس</option>
                 </select>
             </div>
             <div>
@@ -3513,31 +3323,6 @@ function wc_suf_render_detailed_logs_html( $args = [] ) {
                 </tr>
             <?php endforeach; else: ?>
                 <tr><td colspan="13" style="text-align:center">رکوردی یافت نشد.</td></tr>
-            <?php endif; ?>
-            </tbody>
-        </table>
-        <h2 style="margin-top:28px">لاگ فروش ووکامرس</h2>
-        <p style="margin-top:0; color:#475569">این بخش تمام سفارش‌های ثبت‌شده در ووکامرس را (فروش عادی، سفارش دستی، فروش YITH POS و فروش ثبت‌شده از افزونه) به‌صورت ردیف‌های فروش نمایش می‌دهد.</p>
-        <table class="widefat fixed striped">
-            <thead><tr>
-                <th>#</th><th>کد سفارش</th><th>کانال فروش</th><th>انبار کاهشی</th><th>ID محصول</th><th>نام محصول</th><th>تغییر موجودی</th><th>مشتری/کاربر</th><th>وضعیت سفارش</th><th>تاریخ (شمسی)</th>
-            </tr></thead>
-            <tbody>
-            <?php if ( ! empty($sales_rows) ) : foreach($sales_rows as $r): ?>
-                <tr>
-                    <td><?php echo esc_html($r->id); ?></td>
-                    <td><?php echo esc_html($r->batch_code); ?></td>
-                    <td><?php echo esc_html($r->sale_channel ?? 'فروش'); ?></td>
-                    <td><?php echo esc_html($r->destination ?: '—'); ?></td>
-                    <td><?php echo esc_html($r->product_id); ?></td>
-                    <td><?php echo esc_html($r->product_name ?: ''); ?></td>
-                    <td><?php echo esc_html((float)$r->change_qty); ?></td>
-                    <td><?php echo esc_html($r->user_login ?: 'مهمان'); ?></td>
-                    <td><?php echo esc_html($r->order_status ?: '—'); ?></td>
-                    <td><?php echo esc_html( wc_suf_format_jalali_datetime($r->created_at) ); ?></td>
-                </tr>
-            <?php endforeach; else: ?>
-                <tr><td colspan="10" style="text-align:center">سفارشی یافت نشد.</td></tr>
             <?php endif; ?>
             </tbody>
         </table>
