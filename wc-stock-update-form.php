@@ -604,7 +604,7 @@ function wc_suf_op_label($op){
     if ($op === 'transfer') return 'انتقال بین انبارها';
     if ($op === 'in')       return 'ورود';
     if ($op === 'sale')     return 'فروش';
-    if ($op === 'sale_edit') return 'ویرایش سفارش ووکامرس';
+    if ($op === 'sale_edit') return 'ویرایش سفارش';
     if ($op === 'onlyLabel') return 'فقط لیبل';
     return $op;
 }
@@ -620,7 +620,7 @@ function wc_suf_destination_label( $destination ) {
         return 'انبار تهرانپارس';
     }
     if ( $destination === 'woocommerce' ) {
-        return 'ووکامرس';
+        return 'انبار اصلی';
     }
     return $destination;
 }
@@ -950,7 +950,7 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
     $audit_table = $wpdb->prefix . 'stock_audit';
     $move_table = $wpdb->prefix . 'stock_production_moves';
     $order_number = (string) $order->get_order_number();
-    $batch_code = 'order_edit_' . $order_number . '_' . wp_date( 'Ymd_His' );
+    $batch_code = 'oder_edir_' . $order_number;
     $created_at_mysql = current_time( 'mysql' );
 
     $current_user = wp_get_current_user();
@@ -981,14 +981,14 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
             continue;
         }
 
-        $stock_product = wc_get_product( (int) $product_id );
+        $stock_product = wc_suf_get_stock_product( wc_get_product( (int) $product_id ) );
         if ( ! $stock_product || ! $stock_product->managing_stock() ) {
             continue;
         }
 
         $direction = ( $delta > 0 ) ? 'increase' : 'decrease';
         $purpose = sprintf(
-            'ویرایش دستی ادمین سفارش #%s در ووکامرس | %s موجودی | %s → %s',
+            'ویرایش سفارش #%s | %s موجودی اصلی ووکامرس | %s → %s',
             $order_number,
             ( $direction === 'increase' ? 'افزایش' : 'کاهش' ),
             wc_format_decimal( $old_qty, 4 ),
@@ -1000,7 +1000,7 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
             [
                 'batch_code'           => $batch_code,
                 'operation'            => 'sale_edit',
-                'destination'          => 'woocommerce',
+                'destination'          => 'main',
                 'product_id'           => (int) $meta['product_id'],
                 'product_name'         => (string) $meta['product_name'],
                 'sku'                  => (string) $meta['sku'],
@@ -1010,8 +1010,8 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
                 'old_qty'              => $old_qty,
                 'change_qty'           => $delta,
                 'new_qty'              => $new_qty,
-                'destination_old_qty'  => null,
-                'destination_new_qty'  => null,
+                'destination_old_qty'  => $old_qty,
+                'destination_new_qty'  => $new_qty,
                 'user_id'              => $user_id > 0 ? $user_id : null,
                 'user_login'           => $user_display,
                 'user_code'            => $order_number,
