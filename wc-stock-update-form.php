@@ -706,6 +706,16 @@ function wc_suf_get_order_stock_source( $order ) {
     $tehranpars_store_id = (int) WC_SUF_TEHRANPARS_STORE_ID;
     $is_tehranpars_store = ( $reduced_stock_store_id > 0 && $reduced_stock_store_id === $tehranpars_store_id );
 
+    /*
+     * قاعده‌ی قطعی:
+     * اگر سفارش با فلگ YITH POS ثبت شده باشد (_yith_pos_order = 1)،
+     * مبدا/مقصد موجودی برای لاگ فروش باید تهرانپارس باشد؛ حتی اگر متای استور
+     * هنوز کامل نشده باشد یا تابع YITH در این لحظه در دسترس نباشد.
+     */
+    if ( $yith_pos_order_flag ) {
+        $is_tehranpars_store = true;
+    }
+
     if ( ! $is_tehranpars_store && $yith_pos_order_flag ) {
         if ( $pos_store_id <= 0 || $pos_store_id === $tehranpars_store_id ) {
             $is_tehranpars_store = true;
@@ -721,7 +731,7 @@ function wc_suf_get_order_stock_source( $order ) {
         ];
     }
 
-    if ( $is_pos && function_exists( 'yith_pos_stock_management' ) ) {
+    if ( $is_pos ) {
         return [
             'is_pos'     => true,
             'destination'=> 'teh',
