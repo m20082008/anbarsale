@@ -624,6 +624,17 @@ function wc_suf_destination_label( $destination ) {
     return $destination;
 }
 
+function wc_suf_get_order_item_reduced_stock_qty( $item ) {
+    if ( ! $item || ! is_object( $item ) || ! method_exists( $item, 'get_meta' ) ) {
+        return null;
+    }
+    $reduced = $item->get_meta( '_reduced_stock', true );
+    if ( $reduced === '' || $reduced === null ) {
+        return null;
+    }
+    return (float) $reduced;
+}
+
 function wc_suf_log_woocommerce_order_sale( $order_id ) {
     if ( ! function_exists('wc_get_order') ) {
         return;
@@ -664,8 +675,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
 
     $customer_id = (int) $order->get_customer_id();
     $order_number = (string) $order->get_order_number();
-    $created_at = $order->get_date_created();
-    $created_at_mysql = $created_at ? $created_at->date_i18n('Y-m-d H:i:s') : current_time('mysql');
+    $created_at_mysql = current_time('mysql');
 
     $logged_any_item = false;
     $receipt_rows = [];
@@ -697,9 +707,17 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
             }
         }
 
-        $new_qty = $current_stock;
-        $old_qty = $current_stock + $qty;
         $change_qty = -1 * $qty;
+        $item_reduced_stock = wc_suf_get_order_item_reduced_stock_qty( $item );
+        if ( $item_reduced_stock !== null && $item_reduced_stock > 0 ) {
+            // وقتی ووکامرس قبلاً موجودی را کم کرده، موجودی فعلی همان new_qty است.
+            $new_qty = $current_stock;
+            $old_qty = $current_stock + $item_reduced_stock;
+        } else {
+            // اگر هنوز کسر انبار انجام نشده، old_qty را از انبار اصلی می‌خوانیم و new_qty را محاسبه می‌کنیم.
+            $old_qty = $current_stock;
+            $new_qty = $current_stock - $qty;
+        }
         $product_name = (string) ( $item->get_name() ?: ( $product ? $product->get_name() : '' ) );
 
         $move_inserted = $wpdb->insert(
@@ -3106,15 +3124,24 @@ function wc_suf_gregorian_to_jalali( $gy, $gm, $gd ) {
 }
 
 function wc_suf_format_jalali_datetime( $mysql_datetime ) {
-    $ts = strtotime( (string) $mysql_datetime );
-    if ( ! $ts ) return (string) $mysql_datetime;
+    $datetime_string = trim( (string) $mysql_datetime );
+    if ( $datetime_string === '' ) {
+        return '';
+    }
 
-    $gy = (int) gmdate('Y', $ts);
-    $gm = (int) gmdate('n', $ts);
-    $gd = (int) gmdate('j', $ts);
+    try {
+        $timezone = wp_timezone();
+        $dt = new DateTime( $datetime_string, $timezone );
+    } catch ( Exception $e ) {
+        return $datetime_string;
+    }
+
+    $gy = (int) $dt->format('Y');
+    $gm = (int) $dt->format('n');
+    $gd = (int) $dt->format('j');
     [$jy, $jm, $jd] = wc_suf_gregorian_to_jalali( $gy, $gm, $gd );
 
-    return sprintf('%04d/%02d/%02d %s', $jy, $jm, $jd, gmdate('H:i:s', $ts));
+    return sprintf('%04d/%02d/%02d %s', $jy, $jm, $jd, $dt->format('H:i:s'));
 }
 
 function wc_suf_collect_detailed_log_filters() {
