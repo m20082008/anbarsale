@@ -603,6 +603,7 @@ function wc_suf_op_label($op){
     if ($op === 'transfer_teh_main') return 'انتقال از تهرانپارس به انبار اصلی';
     if ($op === 'transfer') return 'انتقال بین انبارها';
     if ($op === 'in')       return 'ورود';
+    if ($op === 'sale')     return 'فروش';
     if ($op === 'onlyLabel') return 'فقط لیبل';
     return $op;
 }
@@ -617,8 +618,150 @@ function wc_suf_destination_label( $destination ) {
     if ( $destination === 'teh' ) {
         return 'انبار تهرانپارس';
     }
+    if ( $destination === 'woocommerce' ) {
+        return 'ووکامرس';
+    }
     return $destination;
 }
+
+function wc_suf_log_woocommerce_order_sale( $order_id ) {
+    if ( ! function_exists('wc_get_order') ) {
+        return;
+    }
+
+    $order = wc_get_order( $order_id );
+    if ( ! $order ) {
+        return;
+    }
+
+    if ( 'yes' === $order->get_meta('_wc_suf_sale_logged', true) ) {
+        return;
+    }
+
+    $items = $order->get_items( 'line_item' );
+    if ( empty($items) ) {
+        return;
+    }
+
+    global $wpdb;
+    $move_table = $wpdb->prefix . 'stock_production_moves';
+    $audit_table = $wpdb->prefix . 'stock_audit';
+
+    $customer_name = trim( (string) $order->get_formatted_billing_full_name() );
+    if ( $customer_name === '' ) {
+        $customer_name = trim( (string) $order->get_shipping_first_name() . ' ' . (string) $order->get_shipping_last_name() );
+    }
+    if ( $customer_name === '' ) {
+        $customer_name = (string) $order->get_billing_email();
+    }
+    if ( $customer_name === '' ) {
+        $customer_name = 'مشتری ووکامرس';
+    }
+
+    $customer_id = (int) $order->get_customer_id();
+    $order_number = (string) $order->get_order_number();
+    $created_at = $order->get_date_created();
+    $created_at_mysql = $created_at ? $created_at->date_i18n('Y-m-d H:i:s') : current_time('mysql');
+
+    $logged_any_item = false;
+
+    foreach ( $items as $item ) {
+        if ( ! is_a($item, 'WC_Order_Item_Product') ) {
+            continue;
+        }
+
+        $qty = (float) $item->get_quantity();
+        if ( $qty <= 0 ) {
+            continue;
+        }
+
+        $product_id = (int) $item->get_variation_id();
+        if ( $product_id <= 0 ) {
+            $product_id = (int) $item->get_product_id();
+        }
+        if ( $product_id <= 0 ) {
+            continue;
+        }
+
+        $product = wc_get_product( $product_id );
+        $current_stock = 0.0;
+        if ( $product ) {
+            $stock_qty = $product->get_stock_quantity();
+            if ( $stock_qty !== null ) {
+                $current_stock = (float) $stock_qty;
+            }
+        }
+
+        $new_qty = $current_stock;
+        $old_qty = $current_stock + $qty;
+        $change_qty = -1 * $qty;
+        $product_name = (string) ( $item->get_name() ?: ( $product ? $product->get_name() : '' ) );
+
+        $move_inserted = $wpdb->insert(
+            $move_table,
+            [
+                'batch_code' => $order_number,
+                'operation' => 'sale',
+                'destination' => 'woocommerce',
+                'product_id' => $product_id,
+                'product_name' => $product_name,
+                'sku' => $product ? (string) $product->get_sku() : '',
+                'product_type' => $product ? (string) $product->get_type() : '',
+                'parent_id' => $product ? (int) $product->get_parent_id() : 0,
+                'attributes_text' => $product ? wc_suf_get_product_attributes_text($product) : '',
+                'old_qty' => $old_qty,
+                'change_qty' => $change_qty,
+                'new_qty' => $new_qty,
+                'destination_old_qty' => null,
+                'destination_new_qty' => null,
+                'user_id' => $customer_id > 0 ? $customer_id : null,
+                'user_login' => $customer_name,
+                'user_code' => $order_number,
+                'created_at' => $created_at_mysql,
+            ],
+            [
+                '%s','%s','%s','%d','%s','%s','%s','%d','%s',
+                '%f','%f','%f','%f','%f','%d','%s','%s','%s'
+            ]
+        );
+
+        $audit_inserted = $wpdb->insert(
+            $audit_table,
+            [
+                'batch_code'   => $order_number,
+                'csv_file_url' => null,
+                'word_file_url'=> null,
+                'op_type'      => 'sale',
+                'purpose'      => 'سفارش ووکامرس',
+                'print_label'  => 0,
+                'product_id'   => $product_id,
+                'product_name' => $product_name,
+                'old_qty'      => $old_qty,
+                'added_qty'    => $change_qty,
+                'new_qty'      => $new_qty,
+                'user_id'      => $customer_id > 0 ? $customer_id : null,
+                'user_login'   => $customer_name,
+                'user_code'    => $order_number,
+                'ip'           => '',
+                'created_at'   => $created_at_mysql,
+            ],
+            [
+                '%s','%s','%s','%s','%s','%d','%d','%s','%f',
+                '%f','%f','%d','%s','%s','%s','%s'
+            ]
+        );
+
+        if ( false !== $move_inserted && false !== $audit_inserted ) {
+            $logged_any_item = true;
+        }
+    }
+
+    if ( $logged_any_item ) {
+        $order->update_meta_data('_wc_suf_sale_logged', 'yes');
+        $order->save_meta_data();
+    }
+}
+add_action( 'woocommerce_new_order', 'wc_suf_log_woocommerce_order_sale', 20 );
 
 function wc_suf_audit_op_type_for_storage( $op_type, $out_destination = '', $return_destination = '', $transfer_source = '', $transfer_destination = '' ) {
     if ( $op_type === 'out' ) {
@@ -2948,10 +3091,11 @@ function wc_suf_collect_detailed_log_filters() {
         'op' => isset($_GET['op']) ? sanitize_text_field( wp_unslash($_GET['op']) ) : '',
         'product_id' => isset($_GET['product_id']) ? absint($_GET['product_id']) : 0,
         'user_id' => isset($_GET['user_id']) ? absint($_GET['user_id']) : 0,
+        'paged' => isset($_GET['paged']) ? max(1, absint($_GET['paged'])) : 1,
     ];
 }
 
-function wc_suf_get_detailed_logs_rows( $filters, $limit = 500, $apply_limit = true ) {
+function wc_suf_get_detailed_logs_rows( $filters, $limit = 100, $apply_limit = true, $offset = 0 ) {
     global $wpdb;
     $move_table = $wpdb->prefix.'stock_production_moves';
     $audit_table = $wpdb->prefix.'stock_audit';
@@ -2980,7 +3124,7 @@ function wc_suf_get_detailed_logs_rows( $filters, $limit = 500, $apply_limit = t
         $params[] = $batch_filter;
     }
 
-    if ( in_array( $op_filter, ['in','out','transfer','return','onlyLabel'], true ) ) {
+    if ( in_array( $op_filter, ['in','out','transfer','return','sale','onlyLabel'], true ) ) {
         $where[] = 'm.operation = %s';
         $params[] = $op_filter;
     }
@@ -3018,11 +3162,70 @@ function wc_suf_get_detailed_logs_rows( $filters, $limit = 500, $apply_limit = t
             ORDER BY m.id DESC";
 
     if ( $apply_limit ) {
-        $sql .= " LIMIT %d";
+        $sql .= " LIMIT %d OFFSET %d";
         $params[] = (int) $limit;
+        $params[] = max(0, (int) $offset);
     }
 
+    if ( empty($params) ) {
+        return $wpdb->get_results( $sql );
+    }
     return $wpdb->get_results( $wpdb->prepare($sql, ...$params) );
+}
+
+function wc_suf_get_detailed_logs_total_count( $filters ) {
+    global $wpdb;
+    $move_table = $wpdb->prefix.'stock_production_moves';
+
+    $q = (string) ( $filters['q'] ?? '' );
+    $from = (string) ( $filters['from'] ?? '' );
+    $to = (string) ( $filters['to'] ?? '' );
+    $batch_filter = (string) ( $filters['batch_code'] ?? '' );
+    $op_filter = (string) ( $filters['op'] ?? '' );
+    $pid_filter = (int) ( $filters['product_id'] ?? 0 );
+    $uid_filter = (int) ( $filters['user_id'] ?? 0 );
+
+    $where = [];
+    $params = [];
+
+    if ( $q !== '' ) {
+        $where[] = '(m.product_name LIKE %s OR m.batch_code LIKE %s OR m.operation LIKE %s)';
+        $like = '%' . $wpdb->esc_like($q) . '%';
+        $params[] = $like;
+        $params[] = $like;
+        $params[] = $like;
+    }
+    if ( $batch_filter !== '' ) {
+        $where[] = 'm.batch_code = %s';
+        $params[] = $batch_filter;
+    }
+    if ( in_array( $op_filter, ['in','out','transfer','return','sale','onlyLabel'], true ) ) {
+        $where[] = 'm.operation = %s';
+        $params[] = $op_filter;
+    }
+    if ( $pid_filter > 0 ) {
+        $where[] = 'm.product_id = %d';
+        $params[] = $pid_filter;
+    }
+    if ( $uid_filter > 0 ) {
+        $where[] = 'm.user_id = %d';
+        $params[] = $uid_filter;
+    }
+    if ( preg_match('/^\d{4}-\d{2}-\d{2}$/', $from) ) {
+        $where[] = 'DATE(m.created_at) >= %s';
+        $params[] = $from;
+    }
+    if ( preg_match('/^\d{4}-\d{2}-\d{2}$/', $to) ) {
+        $where[] = 'DATE(m.created_at) <= %s';
+        $params[] = $to;
+    }
+
+    $where_sql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+    $sql = "SELECT COUNT(*) FROM `$move_table` m $where_sql";
+    if ( empty($params) ) {
+        return (int) $wpdb->get_var( $sql );
+    }
+    return (int) $wpdb->get_var( $wpdb->prepare($sql, ...$params) );
 }
 
 function wc_suf_generate_simple_xlsx( $filename, $headers, $rows ) {
@@ -3191,8 +3394,16 @@ function wc_suf_render_detailed_logs_html( $args = [] ) {
     $pid_filter = (int) $filters['product_id'];
     $uid_filter = (int) $filters['user_id'];
 
-    $limit = 500;
-    $rows = wc_suf_get_detailed_logs_rows( $filters, $limit, true );
+    $limit = 100;
+    $current_page = max(1, (int)($filters['paged'] ?? 1));
+    $offset = ($current_page - 1) * $limit;
+    $total_rows = wc_suf_get_detailed_logs_total_count( $filters );
+    $total_pages = max(1, (int) ceil($total_rows / $limit));
+    if ( $current_page > $total_pages ) {
+        $current_page = $total_pages;
+        $offset = ($current_page - 1) * $limit;
+    }
+    $rows = wc_suf_get_detailed_logs_rows( $filters, $limit, true, $offset );
     $batch_codes = $wpdb->get_col( "SELECT DISTINCT batch_code FROM `$move_table` WHERE batch_code IS NOT NULL AND batch_code<>'' ORDER BY id DESC LIMIT 1000" );
     $products_for_filter = $wpdb->get_results( "SELECT product_id, MAX(product_name) AS product_name FROM `$move_table` GROUP BY product_id ORDER BY MAX(id) DESC LIMIT 2000" );
     $users_for_filter = $wpdb->get_results( "SELECT user_id, MAX(user_login) AS user_login FROM `$move_table` WHERE user_id IS NOT NULL AND user_id > 0 GROUP BY user_id ORDER BY MAX(id) DESC LIMIT 500" );
@@ -3238,6 +3449,7 @@ function wc_suf_render_detailed_logs_html( $args = [] ) {
                     <option value="out" <?php selected($op_filter, 'out'); ?>>خروج</option>
                     <option value="transfer" <?php selected($op_filter, 'transfer'); ?>>انتقال بین انبارها</option>
                     <option value="return" <?php selected($op_filter, 'return'); ?>>مرجوعی</option>
+                    <option value="sale" <?php selected($op_filter, 'sale'); ?>>فروش</option>
                     <option value="onlyLabel" <?php selected($op_filter, 'onlyLabel'); ?>>صرفاً جهت چاپ</option>
                 </select>
             </div>
@@ -3326,6 +3538,24 @@ function wc_suf_render_detailed_logs_html( $args = [] ) {
             <?php endif; ?>
             </tbody>
         </table>
+        <?php if ( $total_pages > 1 ) :
+            $page_base_args = $_GET;
+            unset($page_base_args['paged']);
+        ?>
+            <div style="margin-top:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+                <span style="font-weight:700">صفحه <?php echo esc_html($current_page); ?> از <?php echo esc_html($total_pages); ?></span>
+                <?php if ( $current_page > 1 ) :
+                    $prev_url = add_query_arg( array_merge($page_base_args, ['paged' => $current_page - 1]) );
+                ?>
+                    <a class="button" href="<?php echo esc_url($prev_url); ?>">&larr; قبلی</a>
+                <?php endif; ?>
+                <?php if ( $current_page < $total_pages ) :
+                    $next_url = add_query_arg( array_merge($page_base_args, ['paged' => $current_page + 1]) );
+                ?>
+                    <a class="button" href="<?php echo esc_url($next_url); ?>">بعدی &rarr;</a>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
         <script>
         jQuery(function($){ if ($.fn.select2) { $('.wc-suf-select2').select2({ width:'resolve', dir:'rtl' }); } });
         </script>
