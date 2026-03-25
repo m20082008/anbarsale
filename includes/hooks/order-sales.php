@@ -368,25 +368,6 @@ function wc_suf_is_manual_admin_order_edit_request() {
     return true;
 }
 
-function wc_suf_get_target_order_status_for_admin_edit( $order ) {
-    $target_status = '';
-    if ( isset( $_POST['order_status'] ) ) {
-        $target_status = wc_clean( wp_unslash( $_POST['order_status'] ) );
-    } elseif ( isset( $_REQUEST['order_status'] ) ) {
-        $target_status = wc_clean( wp_unslash( $_REQUEST['order_status'] ) );
-    }
-
-    if ( $target_status === '' && is_a( $order, 'WC_Order' ) ) {
-        $target_status = (string) $order->get_status();
-    }
-
-    if ( strpos( $target_status, 'wc-' ) === 0 ) {
-        $target_status = substr( $target_status, 3 );
-    }
-
-    return sanitize_key( $target_status );
-}
-
 function wc_suf_parse_admin_order_items_qty_totals( $order, $items ) {
     if ( ! is_a( $order, 'WC_Order' ) ) {
         return [];
@@ -508,11 +489,6 @@ function wc_suf_validate_admin_order_item_qty_against_stock( $order_id, $items )
 
     $order = wc_get_order( $order_id );
     if ( ! $order ) {
-        return;
-    }
-
-    $target_status = wc_suf_get_target_order_status_for_admin_edit( $order );
-    if ( $target_status !== 'on-hold' ) {
         return;
     }
 
