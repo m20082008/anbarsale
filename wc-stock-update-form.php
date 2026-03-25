@@ -1549,10 +1549,20 @@ function wc_suf_ensure_production_inventory_row( $product ) {
 }
 
 function wc_suf_get_production_stock_qty_for_update( $product ) {
+    $qty = wc_suf_get_production_stock_qty_for_update_strict( $product );
+    if ( is_wp_error( $qty ) ) {
+        return 0;
+    }
+    return (int) $qty;
+}
+
+function wc_suf_get_production_stock_qty_for_update_strict( $product ) {
     global $wpdb;
     $table = $wpdb->prefix.'stock_production_inventory';
     $pid   = absint( $product->get_id() );
-    if ( ! $pid ) return 0;
+    if ( ! $pid ) {
+        return new WP_Error( 'production_invalid_product', 'شناسه محصول برای قفل‌گذاری موجودی تولید معتبر نیست.' );
+    }
 
     wc_suf_ensure_production_inventory_row( $product );
     $qty = $wpdb->get_var( $wpdb->prepare(
@@ -1560,7 +1570,14 @@ function wc_suf_get_production_stock_qty_for_update( $product ) {
         $pid
     ) );
 
-    return (int) ($qty ?? 0);
+    if ( '' !== $wpdb->last_error ) {
+        return new WP_Error( 'production_lock_read_failed', 'خواندن موجودی تولید با قفل‌گذاری ناموفق بود. لطفاً دوباره تلاش کنید.' );
+    }
+    if ( null === $qty ) {
+        return new WP_Error( 'production_lock_read_empty', 'خواندن موجودی تولید با قفل‌گذاری نتیجه‌ای برنگرداند. لطفاً دوباره تلاش کنید.' );
+    }
+
+    return (int) $qty;
 }
 
 function wc_suf_set_production_stock_qty( $product, $new_qty ) {
@@ -3244,7 +3261,15 @@ function wc_suf_save_stock_update_handler(){
                 $old = $tx_started ? wc_suf_get_production_stock_qty_for_update( $product ) : wc_suf_get_production_stock_qty( $pid );
             } elseif ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
                 $old = (int) ( wc_suf_get_stock_product( $product )->get_stock_quantity() ?? 0 );
-                $locked_prod_qty[$pid] = $tx_started ? wc_suf_get_production_stock_qty_for_update( $product ) : wc_suf_get_production_stock_qty( $pid );
+                if ( $tx_started ) {
+                    $locked_prod_qty[$pid] = wc_suf_get_production_stock_qty_for_update_strict( $product );
+                    if ( is_wp_error( $locked_prod_qty[$pid] ) ) {
+                        $wpdb->query('ROLLBACK');
+                        wp_send_json_error(['message'=>$locked_prod_qty[$pid]->get_error_message()]);
+                    }
+                } else {
+                    $locked_prod_qty[$pid] = wc_suf_get_production_stock_qty( $pid );
+                }
             } else {
                 if ( $transfer_source === 'main' ) {
                     $old = (int) ( wc_suf_get_stock_product( $product )->get_stock_quantity() ?? 0 );
@@ -3430,7 +3455,18 @@ function wc_suf_save_stock_update_handler(){
             $new_qty      = $prod_new;
             $logged_added = $req;
         } elseif ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
-            $prod_old = isset($locked_prod_qty[$pid]) ? (int) $locked_prod_qty[$pid] : ( $tx_started ? wc_suf_get_production_stock_qty_for_update( $product ) : wc_suf_get_production_stock_qty( $pid ) );
+            if ( isset($locked_prod_qty[$pid]) ) {
+                $prod_old = (int) $locked_prod_qty[$pid];
+            } elseif ( $tx_started ) {
+                $prod_old = wc_suf_get_production_stock_qty_for_update_strict( $product );
+                if ( is_wp_error( $prod_old ) ) {
+                    $wpdb->query('ROLLBACK');
+                    wp_send_json_error(['message'=>$prod_old->get_error_message()]);
+                }
+                $prod_old = (int) $prod_old;
+            } else {
+                $prod_old = wc_suf_get_production_stock_qty( $pid );
+            }
             $prod_new = max( 0, $prod_old - $req );
             $prod_update_result = wc_suf_set_production_stock_qty( $product, $prod_new );
             if ( is_wp_error( $prod_update_result ) ) {
