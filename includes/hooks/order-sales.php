@@ -368,6 +368,196 @@ function wc_suf_is_manual_admin_order_edit_request() {
     return true;
 }
 
+function wc_suf_get_target_order_status_for_admin_edit( $order ) {
+    $target_status = '';
+    if ( isset( $_POST['order_status'] ) ) {
+        $target_status = wc_clean( wp_unslash( $_POST['order_status'] ) );
+    } elseif ( isset( $_REQUEST['order_status'] ) ) {
+        $target_status = wc_clean( wp_unslash( $_REQUEST['order_status'] ) );
+    }
+
+    if ( $target_status === '' && is_a( $order, 'WC_Order' ) ) {
+        $target_status = (string) $order->get_status();
+    }
+
+    if ( strpos( $target_status, 'wc-' ) === 0 ) {
+        $target_status = substr( $target_status, 3 );
+    }
+
+    return sanitize_key( $target_status );
+}
+
+function wc_suf_parse_admin_order_items_qty_totals( $order, $items ) {
+    if ( ! is_a( $order, 'WC_Order' ) ) {
+        return [];
+    }
+
+    $requested_qty_by_item_id = [];
+    foreach ( (array) $items as $item_id => $item_data ) {
+        $item_id = (int) $item_id;
+        if ( $item_id <= 0 || ! is_array( $item_data ) ) {
+            continue;
+        }
+
+        if ( ! isset( $item_data['order_item_qty'] ) ) {
+            continue;
+        }
+
+        $qty = wc_stock_amount( wc_clean( wp_unslash( $item_data['order_item_qty'] ) ) );
+        $requested_qty_by_item_id[ $item_id ] = max( 0, (float) $qty );
+    }
+
+    $totals = [];
+    foreach ( $order->get_items( 'line_item' ) as $order_item_id => $order_item ) {
+        if ( ! is_a( $order_item, 'WC_Order_Item_Product' ) ) {
+            continue;
+        }
+
+        $item_product = $order_item->get_product();
+        if ( ! $item_product ) {
+            continue;
+        }
+
+        $stock_product = wc_suf_get_stock_product( $item_product );
+        if ( ! $stock_product || ! $stock_product->managing_stock() ) {
+            continue;
+        }
+
+        $managed_product_id = (int) $stock_product->get_id();
+        if ( $managed_product_id <= 0 ) {
+            continue;
+        }
+
+        $qty = isset( $requested_qty_by_item_id[ $order_item_id ] )
+            ? $requested_qty_by_item_id[ $order_item_id ]
+            : max( 0, (float) $order_item->get_quantity() );
+
+        if ( ! isset( $totals[ $managed_product_id ] ) ) {
+            $totals[ $managed_product_id ] = 0.0;
+        }
+        $totals[ $managed_product_id ] += (float) $qty;
+    }
+
+    return $totals;
+}
+
+function wc_suf_get_order_managed_stock_reserved_totals( $order ) {
+    if ( ! is_a( $order, 'WC_Order' ) ) {
+        return [];
+    }
+
+    $reserved_totals = [];
+    foreach ( $order->get_items( 'line_item' ) as $order_item ) {
+        if ( ! is_a( $order_item, 'WC_Order_Item_Product' ) ) {
+            continue;
+        }
+
+        $item_product = $order_item->get_product();
+        if ( ! $item_product ) {
+            continue;
+        }
+
+        $stock_product = wc_suf_get_stock_product( $item_product );
+        if ( ! $stock_product || ! $stock_product->managing_stock() ) {
+            continue;
+        }
+
+        $managed_product_id = (int) $stock_product->get_id();
+        if ( $managed_product_id <= 0 ) {
+            continue;
+        }
+
+        if ( ! isset( $reserved_totals[ $managed_product_id ] ) ) {
+            $reserved_totals[ $managed_product_id ] = 0.0;
+        }
+        $reserved_totals[ $managed_product_id ] += max( 0, (float) $order_item->get_quantity() );
+    }
+
+    return $reserved_totals;
+}
+
+function wc_suf_abort_admin_order_items_save_with_errors( $messages ) {
+    $messages = array_filter( array_map( 'wc_clean', (array) $messages ) );
+    if ( empty( $messages ) ) {
+        return;
+    }
+
+    foreach ( $messages as $message ) {
+        if ( class_exists( 'WC_Admin_Meta_Boxes' ) && is_callable( [ 'WC_Admin_Meta_Boxes', 'add_error' ] ) ) {
+            WC_Admin_Meta_Boxes::add_error( $message );
+        }
+    }
+
+    wp_send_json_error(
+        [
+            'error' => implode( "\n", $messages ),
+            'messages' => array_values( $messages ),
+        ]
+    );
+}
+
+function wc_suf_validate_admin_order_item_qty_against_stock( $order_id, $items ) {
+    if ( ! wc_suf_is_manual_admin_order_edit_request() ) {
+        return;
+    }
+
+    $order_id = (int) $order_id;
+    if ( $order_id <= 0 ) {
+        return;
+    }
+
+    $order = wc_get_order( $order_id );
+    if ( ! $order ) {
+        return;
+    }
+
+    $target_status = wc_suf_get_target_order_status_for_admin_edit( $order );
+    if ( $target_status !== 'on-hold' ) {
+        return;
+    }
+
+    $attempted_totals = wc_suf_parse_admin_order_items_qty_totals( $order, $items );
+    if ( empty( $attempted_totals ) ) {
+        return;
+    }
+
+    $reserved_totals = wc_suf_get_order_managed_stock_reserved_totals( $order );
+    $errors = [];
+
+    foreach ( $attempted_totals as $managed_product_id => $attempted_qty ) {
+        $stock_product = wc_get_product( (int) $managed_product_id );
+        if ( ! $stock_product ) {
+            continue;
+        }
+
+        if ( ! $stock_product->managing_stock() ) {
+            continue;
+        }
+
+        $current_stock = $stock_product->get_stock_quantity();
+        $current_stock = ( $current_stock === null ) ? 0.0 : (float) $current_stock;
+        $reserved_qty  = isset( $reserved_totals[ $managed_product_id ] ) ? (float) $reserved_totals[ $managed_product_id ] : 0.0;
+        $available_qty = max( 0, $current_stock + $reserved_qty );
+        $attempted_qty = max( 0, (float) $attempted_qty );
+
+        if ( $attempted_qty <= $available_qty ) {
+            continue;
+        }
+
+        $errors[] = sprintf(
+            'مقدار محصول "%1$s" بیشتر از موجودی مجاز است. موجودی قابل تخصیص: %2$s | مقدار درخواستی: %3$s',
+            $stock_product->get_name(),
+            wc_format_decimal( $available_qty, 0 ),
+            wc_format_decimal( $attempted_qty, 0 )
+        );
+    }
+
+    if ( ! empty( $errors ) ) {
+        wc_suf_abort_admin_order_items_save_with_errors( $errors );
+    }
+}
+add_action( 'woocommerce_before_save_order_items', 'wc_suf_validate_admin_order_item_qty_against_stock', 1, 2 );
+
 function wc_suf_capture_order_stock_snapshot( $order ) {
     if ( ! is_a( $order, 'WC_Order' ) ) {
         return [];
