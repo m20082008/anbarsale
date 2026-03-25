@@ -1884,23 +1884,22 @@ add_shortcode('stock_update_form', function($atts){
       .wc-suf-optype-btn:hover{border-color:#64748b; background:#f8fafc}
       .wc-suf-optype-btn.is-active{border-color:#2563eb; background:#2563eb; color:#fff; box-shadow:0 0 0 2px #bfdbfe}
       .wc-suf-optype-btn.is-disabled{opacity:.55; cursor:not-allowed}
-      .wc-suf-sale-customer-wrap{display:none; gap:10px; align-items:center; flex-wrap:wrap}
-      .wc-suf-sale-customer-wrap label{min-width:120px}
-      .wc-suf-sale-customer-wrap input{padding:8px; border:1px solid #e5e7eb; border-radius:10px}
-      .wc-suf-sale-customer-wrap #sale-customer-name{min-width:220px}
-      .wc-suf-sale-customer-wrap #sale-customer-mobile{min-width:180px}
-      .wc-suf-sale-customer-wrap #sale-customer-address{min-width:320px}
+      .wc-suf-sale-customer-wrap{display:none; flex-direction:column; gap:10px; width:100%}
+      .wc-suf-sale-customer-row{display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%}
+      .wc-suf-sale-customer-field{display:flex; align-items:center; gap:8px}
+      .wc-suf-sale-customer-field label{min-width:120px}
+      .wc-suf-sale-customer-field input,
+      .wc-suf-sale-customer-field textarea{width:100%; padding:8px; border:1px solid #e5e7eb; border-radius:10px}
+      .wc-suf-sale-customer-field textarea{min-height:82px; resize:vertical}
       @media (max-width: 768px){
         #optype-block{gap:10px !important; padding:10px !important}
         #optype-block > div:first-child{min-width:unset !important; width:100%}
         .wc-suf-optype-buttons{display:grid; grid-template-columns:1fr; width:100%}
         .wc-suf-optype-btn{width:100%; justify-content:flex-start; padding:12px}
         .wc-suf-sale-customer-wrap{gap:8px}
-        .wc-suf-sale-customer-wrap label{min-width:unset; width:100%; font-size:13px}
-        .wc-suf-sale-customer-wrap input,
-        .wc-suf-sale-customer-wrap #sale-customer-name,
-        .wc-suf-sale-customer-wrap #sale-customer-mobile,
-        .wc-suf-sale-customer-wrap #sale-customer-address{width:100%; min-width:unset}
+        .wc-suf-sale-customer-row{grid-template-columns:1fr}
+        .wc-suf-sale-customer-field{flex-direction:column; align-items:stretch}
+        .wc-suf-sale-customer-field label{min-width:unset; width:100%; font-size:13px}
       }
     </style>
 
@@ -2003,12 +2002,22 @@ add_shortcode('stock_update_form', function($atts){
         </div>
         
         <div id="sale-customer-wrap" class="wc-suf-sale-customer-wrap">
-          <label for="sale-customer-name">نام و نام خانوادگی:</label>
-          <input id="sale-customer-name" type="text" placeholder="مثال: علی رضایی">
-          <label for="sale-customer-mobile">شماره موبایل:</label>
-          <input id="sale-customer-mobile" type="tel" placeholder="۰۹xxxxxxxxx">
-          <label for="sale-customer-address">آدرس:</label>
-          <input id="sale-customer-address" type="text" placeholder="آدرس کامل مشتری">
+          <div class="wc-suf-sale-customer-row">
+            <div class="wc-suf-sale-customer-field">
+              <label for="sale-customer-name">نام و نام خانوادگی:</label>
+              <input id="sale-customer-name" type="text" placeholder="مثال: علی رضایی">
+            </div>
+            <div class="wc-suf-sale-customer-field">
+              <label for="sale-customer-mobile">شماره موبایل:</label>
+              <input id="sale-customer-mobile" type="tel" placeholder="۰۹xxxxxxxxx">
+            </div>
+          </div>
+          <div class="wc-suf-sale-customer-row">
+            <div class="wc-suf-sale-customer-field" style="grid-column:1 / -1;">
+              <label for="sale-customer-address">آدرس:</label>
+              <textarea id="sale-customer-address" placeholder="آدرس کامل مشتری"></textarea>
+            </div>
+          </div>
         </div>
 
         <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; opacity:.5" id="picker-open-block">
@@ -2142,6 +2151,7 @@ add_shortcode('stock_update_form', function($atts){
         function findById(id){ return allProducts.find(p => String(p.id) === String(id)); }
         function findLabelById(id){ const f = findById(id); return f ? f.label : ''; }
         function findProductionStockById(id){ const f = findById(id); return f ? (+f.prod_stock || 0) : 0; }
+        function findMainStockById(id){ const f = findById(id); return f ? (+f.wc_stock || 0) : 0; }
         function warehouseLabel(code){
             if(code === 'main') return 'انبار اصلی';
             if(code === 'teh') return 'انبار تهران پارس';
@@ -2212,6 +2222,9 @@ add_shortcode('stock_update_form', function($atts){
                     return `ID: ${pid} | موجودی انبار تولید: ${prod} | موجودی تهران پارس: ${teh}${note}`;
                 }
                 return `ID: ${pid} | موجودی انبار تولید: ${prod}`;
+            }
+            if(opType === 'sale' || opType === 'sale_teh'){
+                return `ID: ${pid} | موجودی انبار تولید: ${prod} | موجودی انبار اصلی: ${(+p.wc_stock || 0)}`;
             }
             return `ID: ${pid} | موجودی انبار تولید: ${prod}`;
         }
@@ -2421,6 +2434,13 @@ add_shortcode('stock_update_form', function($atts){
             const it = items[idx];
             if(!it) return;
             const sourceStock = findTransferSourceStockById(it.id);
+            if(it.qty > sourceStock){ it.qty = sourceStock; }
+        }
+        function enforceSaleLimit(idx){
+            if(opType !== 'sale' && opType !== 'sale_teh') return;
+            const it = items[idx];
+            if(!it) return;
+            const sourceStock = findMainStockById(it.id);
             if(it.qty > sourceStock){ it.qty = sourceStock; }
         }
 
@@ -2644,6 +2664,18 @@ add_shortcode('stock_update_form', function($atts){
             }
             return qty;
         }
+        function capQtyForSale(pid, qty, showAlert){
+            if(opType !== 'sale' && opType !== 'sale_teh') return qty;
+            const stock = findMainStockById(pid);
+            if (qty > stock){
+                if (showAlert){
+                    const name = findLabelById(pid) || ('#'+pid);
+                    alert(`برای "${name}" حداکثر قابل انتخاب ${stock} عدد است (موجودی انبار اصلی).`);
+                }
+                return stock;
+            }
+            return qty;
+        }
 
         refreshPickerOpenButton();
         updateModalSubtitle();
@@ -2691,6 +2723,7 @@ add_shortcode('stock_update_form', function($atts){
             let current = (+pickerQty[pid] || 0) + 1;
             current = capQtyForOut(pid, current, true);
             current = capQtyForTransfer(pid, current, true);
+            current = capQtyForSale(pid, current, true);
             pickerQty[pid] = current;
             $results.find(`.picker-qty[data-pid="${pid}"]`).val(current);
             updateSelectedInfo();
@@ -2711,6 +2744,7 @@ add_shortcode('stock_update_form', function($atts){
             v = Math.max(0, Math.floor(v));
             v = capQtyForOut(pid, v, true);
             v = capQtyForTransfer(pid, v, true);
+            v = capQtyForSale(pid, v, true);
             pickerQty[pid] = v;
             $(this).val(v);
             updateSelectedInfo();
@@ -2739,6 +2773,13 @@ add_shortcode('stock_update_form', function($atts){
                         return;
                     }
                 }
+                if (opType === 'sale' || opType === 'sale_teh'){
+                    const sourceStock = findMainStockById(pid);
+                    if (qty > sourceStock){
+                        alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی انبار اصلی است.`);
+                        return;
+                    }
+                }
 
                 const existingIdx = items.findIndex(x => String(x.id) === String(pid));
                 if (existingIdx >= 0){
@@ -2746,10 +2787,12 @@ add_shortcode('stock_update_form', function($atts){
                     items[existingIdx].stock = stock;
                     enforceOutLimit(existingIdx);
                     enforceTransferLimit(existingIdx);
+                    enforceSaleLimit(existingIdx);
                 } else {
                     items.push({id: pid, name, qty, stock});
                     enforceOutLimit(items.length - 1);
                     enforceTransferLimit(items.length - 1);
+                    enforceSaleLimit(items.length - 1);
                 }
 
                 addedAny = true;
@@ -2924,14 +2967,14 @@ add_shortcode('stock_update_form', function($atts){
         });
 
         $('#items-table').on('click','.row-inc', function(){
-            const i = +$(this).data('i'); items[i].qty++; enforceOutLimit(i); enforceTransferLimit(i); renderTable();
+            const i = +$(this).data('i'); items[i].qty++; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
         });
         $('#items-table').on('click','.row-dec', function(){
-            const i = +$(this).data('i'); items[i].qty = Math.max(1, items[i].qty-1); enforceOutLimit(i); enforceTransferLimit(i); renderTable();
+            const i = +$(this).data('i'); items[i].qty = Math.max(1, items[i].qty-1); enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
         });
         $('#items-table').on('change','.row-qty', function(){
             const i = +$(this).data('i'); let v = +$(this).val();
-            v = Math.max(1, v||1); items[i].qty = v; enforceOutLimit(i); enforceTransferLimit(i); renderTable();
+            v = Math.max(1, v||1); items[i].qty = v; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
         });
 
         $('#items-table').on('click','.btn-del',function(){
@@ -3196,8 +3239,10 @@ function wc_suf_save_stock_update_handler(){
 
             $product = wc_get_product($pid);
             if( ! $product ) continue;
-            if ( $op_type === 'out' || $op_type === 'sale' || $op_type === 'sale_teh' ) {
+            if ( $op_type === 'out' ) {
                 $old = $tx_started ? wc_suf_get_production_stock_qty_for_update( $product ) : wc_suf_get_production_stock_qty( $pid );
+            } elseif ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
+                $old = (int) ( wc_suf_get_stock_product( $product )->get_stock_quantity() ?? 0 );
             } else {
                 if ( $transfer_source === 'main' ) {
                     $old = (int) ( wc_suf_get_stock_product( $product )->get_stock_quantity() ?? 0 );
