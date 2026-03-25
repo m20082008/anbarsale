@@ -3958,14 +3958,43 @@ function wc_suf_render_detailed_logs_html( $args = [] ) {
         <?php if ( $total_pages > 1 ) :
             $page_base_args = $_GET;
             unset($page_base_args['paged']);
+            $page_numbers = [1];
+            $window_end = min(5, $total_pages);
+            for ( $i = 2; $i <= $window_end; $i++ ) {
+                $page_numbers[] = $i;
+            }
+            if ( ! in_array($current_page, $page_numbers, true) && $current_page !== $total_pages ) {
+                $page_numbers[] = $current_page;
+            }
+            if ( $total_pages > 1 ) {
+                $page_numbers[] = $total_pages;
+            }
+            $page_numbers = array_values(array_unique($page_numbers));
+            sort($page_numbers);
         ?>
             <div style="margin-top:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-                <span style="font-weight:700">صفحه <?php echo esc_html($current_page); ?> از <?php echo esc_html($total_pages); ?></span>
+                <span style="font-weight:700">صفحه <?php echo esc_html($current_page); ?> از <?php echo esc_html($total_pages); ?> (هر صفحه 100 مورد)</span>
                 <?php if ( $current_page > 1 ) :
                     $prev_url = add_query_arg( array_merge($page_base_args, ['paged' => $current_page - 1]) );
                 ?>
                     <a class="button" href="<?php echo esc_url($prev_url); ?>">&larr; قبلی</a>
                 <?php endif; ?>
+
+                <?php
+                $last_printed = 0;
+                foreach ( $page_numbers as $page_num ) :
+                    if ( $last_printed > 0 && $page_num - $last_printed > 1 ) {
+                        echo '<span style="padding:0 4px">…</span>';
+                    }
+                    $page_url = add_query_arg( array_merge($page_base_args, ['paged' => $page_num]) );
+                    $is_current = ( (int) $page_num === (int) $current_page );
+                ?>
+                    <a class="button<?php echo $is_current ? ' button-primary' : ''; ?>" href="<?php echo esc_url($page_url); ?>"><?php echo esc_html($page_num); ?></a>
+                <?php
+                    $last_printed = $page_num;
+                endforeach;
+                ?>
+
                 <?php if ( $current_page < $total_pages ) :
                     $next_url = add_query_arg( array_merge($page_base_args, ['paged' => $current_page + 1]) );
                 ?>
@@ -3987,33 +4016,20 @@ function wc_suf_render_detailed_logs_page(){
 }
 
 /*--------------------------------------
-| Admin: گزارش گروهی
+| Admin: لاگ دقیق عملیات
 ---------------------------------------*/
 add_action('admin_menu', function(){
     $cap = current_user_can('manage_woocommerce') ? 'manage_woocommerce' : 'manage_options';
     add_menu_page(
-        'گزارش تغییر موجودی',
-        'گزارش موجودی',
-        $cap,
-        'wc-stock-audit',
-        'wc_suf_render_audit_page',
-        'dashicons-clipboard',
-        56
-    );
-
-    add_submenu_page(
-        'wc-stock-audit',
         'لاگ دقیق عملیات',
         'لاگ دقیق عملیات',
         $cap,
         'wc-stock-audit-detailed',
-        'wc_suf_render_detailed_logs_page'
+        'wc_suf_render_detailed_logs_page',
+        'dashicons-clipboard',
+        56
     );
 });
-function wc_suf_render_audit_page(){
-    if( ! current_user_can('manage_woocommerce') && ! current_user_can('manage_options') ) return;
-    echo wc_suf_render_audit_html();
-}
 
 /*--------------------------------------
 | Shortcode گزارش فرانت: [stock_audit_report]
