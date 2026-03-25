@@ -12,7 +12,10 @@ function wc_suf_current_user_is_pos_manager(){
     if ( ! is_user_logged_in() ) return false;
     $user = wp_get_current_user();
     $roles = (array) ( $user->roles ?? [] );
-    return in_array( 'formeditor', $roles, true ) || in_array( 'marjoo', $roles, true );
+    return in_array( 'formeditor', $roles, true )
+        || in_array( 'marjoo', $roles, true )
+        || in_array( 'sale', $roles, true )
+        || in_array( 'tehsale', $roles, true );
 }
 
 function wc_suf_current_user_has_role( $role ){
@@ -604,6 +607,7 @@ function wc_suf_op_label($op){
     if ($op === 'transfer') return 'انتقال بین انبارها';
     if ($op === 'in')       return 'ورود';
     if ($op === 'sale')     return 'فروش';
+    if ($op === 'sale_teh') return 'فروش تهرانپارس';
     if ($op === 'sale_edit') return 'ویرایش سفارش';
     if ($op === 'sale_cancel') return 'لغو سفارش (برگشت موجودی)';
     if ($op === 'onlyLabel') return 'فقط لیبل';
@@ -1744,9 +1748,11 @@ add_shortcode('stock_update_form', function($atts){
         return ob_get_clean();
     }
     if( ! wc_suf_current_user_is_pos_manager() ){
-        return '<div dir="rtl" style="color:#b91c1c">این فرم فقط برای کاربران با نقش formeditor یا marjoo در دسترس است.</div>';
+        return '<div dir="rtl" style="color:#b91c1c">این فرم فقط برای کاربران با نقش formeditor، marjoo، sale یا tehsale در دسترس است.</div>';
     }
     $is_marjoo = wc_suf_current_user_has_role( 'marjoo' );
+    $is_sale_only = wc_suf_current_user_has_role( 'sale' ) && ! wc_suf_current_user_has_role( 'formeditor' );
+    $is_teh_sale_only = wc_suf_current_user_has_role( 'tehsale' ) && ! wc_suf_current_user_has_role( 'formeditor' );
     $atts = shortcode_atts(['key' => ''], $atts, 'stock_update_form');
     $current_user = wp_get_current_user();
     $display_name = trim( (string) $current_user->first_name . ' ' . (string) $current_user->last_name );
@@ -1889,6 +1895,14 @@ add_shortcode('stock_update_form', function($atts){
             <input type="radio" name="op-type" value="return">
             <span>مرجوعی</span>
           </label>
+          <label class="wc-suf-optype-btn" data-op="sale">
+            <input type="radio" name="op-type" value="sale">
+            <span>فروش</span>
+          </label>
+          <label class="wc-suf-optype-btn" data-op="sale_teh">
+            <input type="radio" name="op-type" value="sale_teh">
+            <span>فروش برای تهرانپارس</span>
+          </label>
           <label class="wc-suf-optype-btn" data-op="onlyLabel">
             <input type="radio" name="op-type" value="onlyLabel" <?php disabled( $is_marjoo ); ?>>
             <span>صرفاً چاپ لیبل</span>
@@ -1941,6 +1955,15 @@ add_shortcode('stock_update_form', function($atts){
             <option value="تعویض طرح یا رنگ">۲- تعویض طرح یا رنگ</option>
             <option value="خرابی کالا (استوک)">۳- خرابی کالا (استوک)</option>
           </select>
+        </div>
+        
+        <div id="sale-customer-wrap" style="display:none; gap:10px; align-items:center; flex-wrap:wrap">
+          <label for="sale-customer-name" style="min-width:120px">نام و نام خانوادگی:</label>
+          <input id="sale-customer-name" type="text" style="padding:8px; border:1px solid #e5e7eb; border-radius:10px; min-width:220px" placeholder="مثال: علی رضایی">
+          <label for="sale-customer-mobile" style="min-width:120px">شماره موبایل:</label>
+          <input id="sale-customer-mobile" type="tel" style="padding:8px; border:1px solid #e5e7eb; border-radius:10px; min-width:180px" placeholder="۰۹xxxxxxxxx">
+          <label for="sale-customer-address" style="min-width:120px">آدرس:</label>
+          <input id="sale-customer-address" type="text" style="padding:8px; border:1px solid #e5e7eb; border-radius:10px; min-width:320px" placeholder="آدرس کامل مشتری">
         </div>
 
         <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; opacity:.5" id="picker-open-block">
@@ -2017,6 +2040,8 @@ add_shortcode('stock_update_form', function($atts){
         const allProducts = <?php echo wp_json_encode($all); ?>;
         const pickerAttrDefs = <?php echo wp_json_encode($picker_attr_defs); ?>;
         const isMarjoo = <?php echo $is_marjoo ? 'true' : 'false'; ?>;
+        const isSaleOnly = <?php echo $is_sale_only ? 'true' : 'false'; ?>;
+        const isTehSaleOnly = <?php echo $is_teh_sale_only ? 'true' : 'false'; ?>;
 
         const defaultShortcodeKey = "<?php echo esc_js($atts['key']); ?>";
         const urlParams = new URLSearchParams(window.location.search);
@@ -2030,6 +2055,9 @@ add_shortcode('stock_update_form', function($atts){
         let transferDestination = null;
         let returnDestination = null;
         let returnReason = '';
+        let saleCustomerName = '';
+        let saleCustomerMobile = '';
+        let saleCustomerAddress = '';
 
         const $overlay = $('#wc-suf-modal-overlay');
         const $modal   = $('#wc-suf-modal');
@@ -2145,11 +2173,14 @@ add_shortcode('stock_update_form', function($atts){
         }
 
         function canSave(){
-            if(opType !== 'in' && opType !== 'out' && opType !== 'transfer' && opType !== 'return' && opType !== 'onlyLabel') return false;
+            if(opType !== 'in' && opType !== 'out' && opType !== 'transfer' && opType !== 'return' && opType !== 'onlyLabel' && opType !== 'sale' && opType !== 'sale_teh') return false;
             if(isMarjoo && opType !== 'return') return false;
+            if(isSaleOnly && opType !== 'sale') return false;
+            if(isTehSaleOnly && opType !== 'sale_teh') return false;
             if(opType === 'out' && !outDestination) return false;
             if(opType === 'transfer' && (!transferSource || !transferDestination || transferSource === transferDestination)) return false;
             if(opType === 'return' && (!returnDestination || !returnReason)) return false;
+            if((opType === 'sale' || opType === 'sale_teh') && !isSaleCustomerDataValid(false)) return false;
             if(isMarjoo && returnDestination !== 'teh') return false;
             return items.length > 0;
         }
@@ -2157,10 +2188,32 @@ add_shortcode('stock_update_form', function($atts){
         function canOpenPicker(){
             if(!opType) return false;
             if(isMarjoo && opType !== 'return') return false;
+            if(isSaleOnly && opType !== 'sale') return false;
+            if(isTehSaleOnly && opType !== 'sale_teh') return false;
             if(opType === 'out' && !outDestination) return false;
             if(opType === 'transfer' && (!transferSource || !transferDestination || transferSource === transferDestination)) return false;
             if(opType === 'return' && (!returnDestination || !returnReason)) return false;
+            if((opType === 'sale' || opType === 'sale_teh') && !isSaleCustomerDataValid(false)) return false;
             if(isMarjoo && returnDestination !== 'teh') return false;
+            return true;
+        }
+
+        function isSaleCustomerDataValid(showAlert){
+            const name = String(saleCustomerName || '').trim();
+            const mobile = String(saleCustomerMobile || '').trim().replace(/[^\d]/g,'');
+            const address = String(saleCustomerAddress || '').trim();
+            if(name.length < 3){
+                if(showAlert) alert('نام و نام خانوادگی را کامل وارد کنید.');
+                return false;
+            }
+            if(!/^0\d{10}$/.test(mobile)){
+                if(showAlert) alert('شماره موبایل باید با 0 شروع شود و دقیقاً 11 رقم باشد.');
+                return false;
+            }
+            if(address.length < 8){
+                if(showAlert) alert('آدرس مشتری را کامل وارد کنید.');
+                return false;
+            }
             return true;
         }
 
@@ -2695,19 +2748,28 @@ add_shortcode('stock_update_form', function($atts){
                 $('#out-destination-wrap').css('display','flex');
                 $('#transfer-controls-wrap').hide();
                 $('#return-controls-wrap').hide();
+                $('#sale-customer-wrap').hide();
             } else if (opType === 'transfer') {
                 $('#out-destination-wrap').hide();
                 $('#transfer-controls-wrap').css('display','flex');
                 $('#return-controls-wrap').hide();
+                $('#sale-customer-wrap').hide();
                 syncTransferDestinationOptions();
             } else if (opType === 'return') {
                 $('#out-destination-wrap').hide();
                 $('#transfer-controls-wrap').hide();
                 $('#return-controls-wrap').css('display','flex');
+                $('#sale-customer-wrap').hide();
+            } else if (opType === 'sale' || opType === 'sale_teh') {
+                $('#out-destination-wrap').hide();
+                $('#transfer-controls-wrap').hide();
+                $('#return-controls-wrap').hide();
+                $('#sale-customer-wrap').css('display','flex');
             } else {
                 $('#out-destination-wrap').hide();
                 $('#transfer-controls-wrap').hide();
                 $('#return-controls-wrap').hide();
+                $('#sale-customer-wrap').hide();
             }
 
             refreshPickerOpenButton();
@@ -2794,9 +2856,17 @@ add_shortcode('stock_update_form', function($atts){
             $('.wc-suf-optype-btn[data-op="in"]').hide();
             $('.wc-suf-optype-btn[data-op="out"]').hide();
             $('.wc-suf-optype-btn[data-op="transfer"]').hide();
+            $('.wc-suf-optype-btn[data-op="sale"]').hide();
+            $('.wc-suf-optype-btn[data-op="sale_teh"]').hide();
             $('.wc-suf-optype-btn[data-op="onlyLabel"]').hide();
             $('input[name="op-type"][value="return"]').prop('checked', true).trigger('change');
             $('#return-destination').val('teh').trigger('change');
+        } else if (isSaleOnly) {
+            $('.wc-suf-optype-btn').hide();
+            $('.wc-suf-optype-btn[data-op="sale"]').show();
+        } else if (isTehSaleOnly) {
+            $('.wc-suf-optype-btn').hide();
+            $('.wc-suf-optype-btn[data-op="sale_teh"]').show();
         }
 
         syncOpTypeButtonsState();
@@ -2804,6 +2874,21 @@ add_shortcode('stock_update_form', function($atts){
         $('#return-reason').on('change', function(){
             if(opType !== 'return') return;
             returnReason = $(this).val() || '';
+            refreshPickerOpenButton();
+            $('#btn-save').prop('disabled', !canSave());
+        });
+        $('#sale-customer-name').on('input', function(){
+            saleCustomerName = $(this).val() || '';
+            refreshPickerOpenButton();
+            $('#btn-save').prop('disabled', !canSave());
+        });
+        $('#sale-customer-mobile').on('input', function(){
+            saleCustomerMobile = $(this).val() || '';
+            refreshPickerOpenButton();
+            $('#btn-save').prop('disabled', !canSave());
+        });
+        $('#sale-customer-address').on('input', function(){
+            saleCustomerAddress = $(this).val() || '';
             refreshPickerOpenButton();
             $('#btn-save').prop('disabled', !canSave());
         });
@@ -2828,6 +2913,7 @@ add_shortcode('stock_update_form', function($atts){
         $('#btn-save').on('click', function(){
             if (submitting) return;
             if (!canSave()) return;
+            if ((opType === 'sale' || opType === 'sale_teh') && !isSaleCustomerDataValid(true)) return;
 
             const submittedProductIds = items.map(function(it){ return parseInt(it.id, 10); }).filter(function(v){ return Number.isFinite(v) && v > 0; });
 
@@ -2854,6 +2940,9 @@ add_shortcode('stock_update_form', function($atts){
                 transfer_destination : String(transferDestination || ''),
                 return_destination : String(returnDestination || ''),
                 return_reason : String(returnReason || ''),
+                sale_customer_name : String(saleCustomerName || ''),
+                sale_customer_mobile : String(saleCustomerMobile || ''),
+                sale_customer_address : String(saleCustomerAddress || ''),
                 op_type     : opType,
                 _wpnonce    : '<?php echo wp_create_nonce('save_stock_update'); ?>'
             }).done(function(res){
@@ -2872,6 +2961,9 @@ add_shortcode('stock_update_form', function($atts){
                             transferDestination = null;
                             returnDestination = null;
                             returnReason = '';
+                            saleCustomerName = '';
+                            saleCustomerMobile = '';
+                            saleCustomerAddress = '';
                             for (const pid in pickerQty){
                                 if (Object.prototype.hasOwnProperty.call(pickerQty, pid)) pickerQty[pid] = 0;
                             }
@@ -2881,9 +2973,13 @@ add_shortcode('stock_update_form', function($atts){
                             $('#transfer-destination').html('<option value="">انتخاب انبار مقصد...</option>');
                             $('#return-destination').val('');
                             $('#return-reason').val('');
+                            $('#sale-customer-name').val('');
+                            $('#sale-customer-mobile').val('');
+                            $('#sale-customer-address').val('');
                             $('#out-destination-wrap').hide();
                             $('#transfer-controls-wrap').hide();
                             $('#return-controls-wrap').hide();
+                            $('#sale-customer-wrap').hide();
                             closeModal();
                             refreshPickerOpenButton();
                             renderTable();
@@ -2951,14 +3047,22 @@ function wc_suf_save_stock_update_handler(){
 
     $user_code   = isset($_POST['user_code']) ? sanitize_text_field( wp_unslash($_POST['user_code']) ) : '';
     $op_type_in  = isset($_POST['op_type']) ? sanitize_text_field( wp_unslash($_POST['op_type']) ) : '';
-    $op_type     = in_array($op_type_in, ['in','out','transfer','return','onlyLabel'], true) ? $op_type_in : '';
+    $op_type     = in_array($op_type_in, ['in','out','transfer','return','onlyLabel','sale','sale_teh'], true) ? $op_type_in : '';
     $is_marjoo_user = wc_suf_current_user_has_role( 'marjoo' );
+    $is_sale_user = wc_suf_current_user_has_role( 'sale' ) && ! wc_suf_current_user_has_role( 'formeditor' );
+    $is_teh_sale_user = wc_suf_current_user_has_role( 'tehsale' ) && ! wc_suf_current_user_has_role( 'formeditor' );
 
     if( ! $op_type ){
-        wp_send_json_error(['message'=>'نوع عملیات مشخص نیست (ورود/خروج/انتقال/مرجوعی/صرفاً چاپ لیبل).']);
+        wp_send_json_error(['message'=>'نوع عملیات مشخص نیست (ورود/خروج/انتقال/مرجوعی/فروش/فروش تهرانپارس/صرفاً چاپ لیبل).']);
     }
     if ( $is_marjoo_user && $op_type !== 'return' ) {
         wp_send_json_error(['message'=>'کاربر مرجوع فقط مجاز به ثبت عملیات مرجوعی است.']);
+    }
+    if ( $is_sale_user && $op_type !== 'sale' ) {
+        wp_send_json_error(['message'=>'کاربر فروش فقط مجاز به ثبت عملیات فروش است.']);
+    }
+    if ( $is_teh_sale_user && $op_type !== 'sale_teh' ) {
+        wp_send_json_error(['message'=>'کاربر فروش تهرانپارس فقط مجاز به ثبت عملیات فروش تهرانپارس است.']);
     }
 
     $out_destination = isset($_POST['out_destination']) ? sanitize_text_field( wp_unslash($_POST['out_destination']) ) : '';
@@ -2966,6 +3070,9 @@ function wc_suf_save_stock_update_handler(){
     $transfer_destination = isset($_POST['transfer_destination']) ? sanitize_text_field( wp_unslash($_POST['transfer_destination']) ) : '';
     $return_destination = isset($_POST['return_destination']) ? sanitize_text_field( wp_unslash($_POST['return_destination']) ) : '';
     $return_reason = isset($_POST['return_reason']) ? sanitize_text_field( wp_unslash($_POST['return_reason']) ) : '';
+    $sale_customer_name = isset($_POST['sale_customer_name']) ? sanitize_text_field( wp_unslash($_POST['sale_customer_name']) ) : '';
+    $sale_customer_mobile = isset($_POST['sale_customer_mobile']) ? sanitize_text_field( wp_unslash($_POST['sale_customer_mobile']) ) : '';
+    $sale_customer_address = isset($_POST['sale_customer_address']) ? sanitize_textarea_field( wp_unslash($_POST['sale_customer_address']) ) : '';
     $transfer_store_id = null;
     if ( $op_type === 'out' ) {
         if ( ! in_array( $out_destination, ['main','teh'], true ) ) {
@@ -3005,6 +3112,19 @@ function wc_suf_save_stock_update_handler(){
             $transfer_store_id = (int) WC_SUF_TEHRANPARS_STORE_ID;
         }
     }
+    if ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
+        if ( mb_strlen( trim( $sale_customer_name ) ) < 3 ) {
+            wp_send_json_error(['message'=>'نام و نام خانوادگی مشتری معتبر نیست.']);
+        }
+        $sale_customer_mobile = preg_replace('/\D+/', '', $sale_customer_mobile);
+        if ( ! preg_match('/^0\d{10}$/', $sale_customer_mobile) ) {
+            wp_send_json_error(['message'=>'شماره موبایل باید با 0 شروع شود و دقیقاً 11 رقم باشد.']);
+        }
+        if ( mb_strlen( trim( $sale_customer_address ) ) < 8 ) {
+            wp_send_json_error(['message'=>'آدرس مشتری معتبر نیست.']);
+        }
+        $out_destination = 'main';
+    }
 
     $user      = wp_get_current_user();
     $uid       = (int) ($user->ID ?? 0);
@@ -3022,14 +3142,14 @@ function wc_suf_save_stock_update_handler(){
     $move_table = $wpdb->prefix.'stock_production_moves';
 
     $tx_started = false;
-    if ( in_array( $op_type, ['in','out','transfer','return','onlyLabel'], true ) ) {
+    if ( in_array( $op_type, ['in','out','transfer','return','onlyLabel','sale','sale_teh'], true ) ) {
         $tx_started = ( false !== $wpdb->query('START TRANSACTION') );
         if ( ! $tx_started ) {
             wp_send_json_error(['message'=>'شروع تراکنش دیتابیس ناموفق بود. عملیات برای جلوگیری از ثبت ناقص متوقف شد.']);
         }
     }
 
-    if ($op_type === 'out' || $op_type === 'transfer') {
+    if ($op_type === 'out' || $op_type === 'transfer' || $op_type === 'sale' || $op_type === 'sale_teh') {
         $insufficient = [];
         $locked_old_qty = [];
         foreach($items as $it){
@@ -3039,7 +3159,7 @@ function wc_suf_save_stock_update_handler(){
 
             $product = wc_get_product($pid);
             if( ! $product ) continue;
-            if ( $op_type === 'out' ) {
+            if ( $op_type === 'out' || $op_type === 'sale' || $op_type === 'sale_teh' ) {
                 $old = $tx_started ? wc_suf_get_production_stock_qty_for_update( $product ) : wc_suf_get_production_stock_qty( $pid );
             } else {
                 if ( $transfer_source === 'main' ) {
@@ -3070,7 +3190,7 @@ function wc_suf_save_stock_update_handler(){
                 return sprintf('محصول %s (ID: %d): درخواست %d، موجودی فعلی %d', $r['name'], $r['id'], $r['req'], $r['have']);
             }, $insufficient);
 
-            $operation_label = ( $op_type === 'transfer' ) ? 'انتقال' : 'خروج';
+            $operation_label = ( $op_type === 'transfer' ) ? 'انتقال' : ( ( $op_type === 'sale' || $op_type === 'sale_teh' ) ? 'فروش' : 'خروج' );
             $msg = "ثبت ناموفق؛ به‌دلیل کمبود موجودی موارد زیر امکان {$operation_label} ندارند:\n- " . implode("\n- ", $lines) . "\n\nلطفاً مقادیر را اصلاح کنید و دوباره تلاش کنید.";
             wp_send_json_error(['message' => $msg]);
         }
@@ -3087,6 +3207,7 @@ function wc_suf_save_stock_update_handler(){
 
     $inserted = 0;
     $csv_rows = [];
+    $sale_order = null;
 
     foreach($items as $it){
         $pid = isset($it['id'])  ? absint($it['id']) : 0;
@@ -3224,6 +3345,29 @@ function wc_suf_save_stock_update_handler(){
             $old_qty      = $prod_old;
             $new_qty      = $prod_new;
             $logged_added = $req;
+        } elseif ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
+            $prod_old = isset($locked_old_qty[$pid]) ? (int) $locked_old_qty[$pid] : ( $tx_started ? wc_suf_get_production_stock_qty_for_update( $product ) : wc_suf_get_production_stock_qty( $pid ) );
+            $prod_new = max( 0, $prod_old - $req );
+            $prod_update_result = wc_suf_set_production_stock_qty( $product, $prod_new );
+            if ( is_wp_error( $prod_update_result ) ) {
+                if ( $tx_started ) {
+                    $wpdb->query('ROLLBACK');
+                }
+                wp_send_json_error(['message'=>$prod_update_result->get_error_message()]);
+            }
+            $destination_old_qty = (int) ( $stock_product->get_stock_quantity() ?? 0 );
+            $main_stock_result = wc_update_product_stock($stock_product, $req, 'increase');
+            if ( false === $main_stock_result ) {
+                if ( $tx_started ) {
+                    $wpdb->query('ROLLBACK');
+                }
+                wp_send_json_error(['message'=>'افزایش موجودی انبار اصلی برای فروش ناموفق بود.']);
+            }
+            $stock_product->save();
+            $destination_new_qty = (int) ( $stock_product->get_stock_quantity() ?? 0 );
+            $old_qty      = $prod_old;
+            $new_qty      = $prod_new;
+            $logged_added = $req;
 
         } elseif( $op_type === 'return' ){
             $logged_added = $req;
@@ -3270,7 +3414,7 @@ function wc_suf_save_stock_update_handler(){
                             ? ( $out_destination === 'teh' ? 'انتقال به انبار تهرانپارس' : 'خروج به انبار اصلی' )
                             : ( ( $op_type === 'transfer' )
                                 ? ( 'انتقال بین انبارها: ' . wc_suf_destination_label( $transfer_source ) . ' → ' . wc_suf_destination_label( $transfer_destination ) )
-                                : ( ( $op_type === 'return' ) ? ('مرجوعی - علت: '.$return_reason) : null ) ),
+                                : ( ( $op_type === 'return' ) ? ('مرجوعی - علت: '.$return_reason) : ( ( $op_type === 'sale' || $op_type === 'sale_teh' ) ? 'فروش و ثبت سفارش ووکامرس' : null ) ) ),
             'print_label'  => ($op_type === 'onlyLabel') ? 1 : 0,
             'product_id'   => $pid,
             'product_name' => $pname,
@@ -3296,11 +3440,11 @@ function wc_suf_save_stock_update_handler(){
             $inserted++;
         }
 
-        if ( in_array( $op_type, ['in','out','transfer','return','onlyLabel'], true ) ) {
+        if ( in_array( $op_type, ['in','out','transfer','return','onlyLabel','sale','sale_teh'], true ) ) {
             $move_data = [
                 'batch_code'      => $batch_code,
                 'operation'       => $op_type,
-                'destination'     => ( $op_type === 'out' ) ? $out_destination : ( $op_type === 'transfer' ? $transfer_destination : ( $op_type === 'return' ? $return_destination : ( $op_type === 'onlyLabel' ? 'label_only' : 'production' ) ) ),
+                'destination'     => ( $op_type === 'out' ) ? $out_destination : ( $op_type === 'transfer' ? $transfer_destination : ( $op_type === 'return' ? $return_destination : ( ( $op_type === 'sale' || $op_type === 'sale_teh' ) ? 'main' : ( $op_type === 'onlyLabel' ? 'label_only' : 'production' ) ) ) ),
                 'product_id'      => $pid,
                 'product_name'    => wc_suf_full_product_label( $product ),
                 'sku'             => $product->get_sku() ?: null,
@@ -3339,6 +3483,44 @@ function wc_suf_save_stock_update_handler(){
             'qty'   => (string) $req,
             'sku'   => (string) ($product->get_sku() ?: ''),
         ];
+    }
+
+    if ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
+        try {
+            $sale_order = wc_create_order();
+            foreach ( $items as $it ) {
+                $pid = isset($it['id'])  ? absint($it['id']) : 0;
+                $req = isset($it['qty']) ? (int) $it['qty']  : 0;
+                if ( ! $pid || $req <= 0 ) continue;
+                $product = wc_get_product( $pid );
+                if ( ! $product ) continue;
+                $sale_order->add_product( $product, $req );
+            }
+
+            $sale_order->set_created_via( 'wc_suf_manual_sale' );
+            $sale_order->set_address([
+                'first_name' => $sale_customer_name,
+                'last_name'  => '.',
+                'phone'      => $sale_customer_mobile,
+                'address_1'  => $sale_customer_address,
+            ], 'billing');
+            $sale_order->update_meta_data( 'فروشنده', $ulog ?: $user->user_login );
+            $sale_order->update_meta_data( '_wc_suf_seller_name', $ulog ?: $user->user_login );
+            $sale_order->update_meta_data( '_wc_suf_sale_channel', ( $op_type === 'sale_teh' ? 'tehranpars' : 'main' ) );
+            $sale_order->update_meta_data( '_wc_suf_sale_operation', $op_type );
+            $sale_order->update_meta_data( '_wc_suf_sale_customer_name', $sale_customer_name );
+            $sale_order->update_meta_data( '_wc_suf_sale_customer_mobile', $sale_customer_mobile );
+            $sale_order->update_meta_data( '_wc_suf_sale_customer_address', $sale_customer_address );
+            $sale_order->calculate_totals();
+            $sale_order->set_status( 'processing', 'ثبت سفارش از فرم عملیات فروش انبار تولید.' );
+            $sale_order->save();
+            wc_reduce_stock_levels( $sale_order->get_id() );
+        } catch ( Exception $e ) {
+            if ( $tx_started ) {
+                $wpdb->query('ROLLBACK');
+            }
+            wp_send_json_error(['message' => 'ساخت سفارش ووکامرس ناموفق بود: ' . $e->getMessage()]);
+        }
     }
 
     $csv_file_url = '';
@@ -3439,10 +3621,11 @@ function wc_suf_save_stock_update_handler(){
     $product_ids = array_values( array_unique( $product_ids ) );
 
     wp_send_json_success([
-        'message'=>"ثبت {$op_label} انجام شد. کد ثبت: {$batch_code}",
+        'message'=>"ثبت {$op_label} انجام شد. کد ثبت: {$batch_code}" . ( ( $sale_order && $sale_order->get_id() ) ? (' | سفارش ووکامرس: #'.$sale_order->get_id()) : '' ),
         'batch_code' => $batch_code,
         'csv_url' => $csv_file_url,
         'word_url' => $word_file_url,
+        'order_id' => ( $sale_order && $sale_order->get_id() ) ? (int) $sale_order->get_id() : 0,
         'product_ids' => $product_ids,
     ]);
 }
@@ -3727,7 +3910,7 @@ function wc_suf_get_detailed_logs_rows( $filters, $limit = 100, $apply_limit = t
         $params[] = $batch_filter;
     }
 
-    if ( in_array( $op_filter, ['in','out','transfer','return','sale','sale_edit','sale_cancel','onlyLabel'], true ) ) {
+    if ( in_array( $op_filter, ['in','out','transfer','return','sale','sale_teh','sale_edit','sale_cancel','onlyLabel'], true ) ) {
         $where[] = 'm.operation = %s';
         $params[] = $op_filter;
     }
@@ -3802,7 +3985,7 @@ function wc_suf_get_detailed_logs_total_count( $filters ) {
         $where[] = 'm.batch_code = %s';
         $params[] = $batch_filter;
     }
-    if ( in_array( $op_filter, ['in','out','transfer','return','sale','sale_edit','sale_cancel','onlyLabel'], true ) ) {
+    if ( in_array( $op_filter, ['in','out','transfer','return','sale','sale_teh','sale_edit','sale_cancel','onlyLabel'], true ) ) {
         $where[] = 'm.operation = %s';
         $params[] = $op_filter;
     }
@@ -4053,6 +4236,7 @@ function wc_suf_render_detailed_logs_html( $args = [] ) {
                     <option value="transfer" <?php selected($op_filter, 'transfer'); ?>>انتقال بین انبارها</option>
                     <option value="return" <?php selected($op_filter, 'return'); ?>>مرجوعی</option>
                     <option value="sale" <?php selected($op_filter, 'sale'); ?>>فروش</option>
+                    <option value="sale_teh" <?php selected($op_filter, 'sale_teh'); ?>>فروش تهرانپارس</option>
                     <option value="sale_edit" <?php selected($op_filter, 'sale_edit'); ?>>ویرایش سفارش</option>
                     <option value="sale_cancel" <?php selected($op_filter, 'sale_cancel'); ?>>لغو سفارش (برگشت موجودی)</option>
                     <option value="onlyLabel" <?php selected($op_filter, 'onlyLabel'); ?>>صرفاً جهت چاپ</option>
