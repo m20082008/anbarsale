@@ -28,6 +28,7 @@ $wc_suf_modules = [
     'includes/services/documents.php',
     'includes/services/production-stock.php',
     'includes/hooks/order-sales.php',
+    'includes/hooks/admin-order-stock-guard.php',
     'includes/ui/stock-form-shortcode.php',
     'includes/ajax/customer-lookup.php',
     'includes/ajax/save-stock-update.php',
