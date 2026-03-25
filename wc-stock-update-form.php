@@ -3425,6 +3425,7 @@ function wc_suf_save_stock_update_handler(){
         : wc_suf_next_batch_code( $op_type === 'return' ? 'return' : ( $op_type === 'out' ? 'out' : ( $op_type === 'transfer' ? 'transfer' : $op_type ) ) );
 
     $inserted = 0;
+    $processed_items = 0;
     $csv_rows = [];
     $sale_order = null;
 
@@ -3435,6 +3436,8 @@ function wc_suf_save_stock_update_handler(){
 
         $product = wc_get_product($pid);
         if( ! $product ) continue;
+
+        $processed_items++;
         $stock_product = wc_suf_get_stock_product( $product );
 
         if( ! $stock_product->managing_stock() ){
@@ -3687,6 +3690,14 @@ function wc_suf_save_stock_update_handler(){
         ];
     }
 
+    if ( $processed_items === 0 ) {
+        if ( $tx_started ) {
+            $wpdb->query('ROLLBACK');
+        }
+        $msg = 'هیچ موردی ثبت نشد.' . ( $wpdb->last_error ? (' DB error: '.$wpdb->last_error) : '' );
+        wp_send_json_error(['message'=>$msg]);
+    }
+
     if ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
         try {
             $sale_order = wc_create_order();
@@ -3792,14 +3803,6 @@ function wc_suf_save_stock_update_handler(){
         }
     }
 
-
-    if ( $inserted === 0 && ! $is_sale_operation ) {
-        if ( $tx_started ) {
-            $wpdb->query('ROLLBACK');
-        }
-        $msg = 'هیچ موردی ثبت نشد.' . ( $wpdb->last_error ? (' DB error: '.$wpdb->last_error) : '' );
-        wp_send_json_error(['message'=>$msg]);
-    }
 
     if ( $tx_started ) {
         $wpdb->query('COMMIT');
