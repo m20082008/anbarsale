@@ -21,18 +21,13 @@ function wc_suf_prevent_negative_stock_in_admin_order_edit( $prevent, $item, $it
         return $prevent;
     }
 
-    $order_status = (string) $order->get_status();
-    if ( ! in_array( $order_status, [ 'pending', 'on-hold' ], true ) ) {
-        return $prevent;
-    }
-
     $product = $item->get_product();
     if ( ! $product || ! $product->managing_stock() || $product->backorders_allowed() ) {
         return $prevent;
     }
 
     $target_qty = wc_stock_amount( null !== $item_quantity ? $item_quantity : $item->get_quantity() );
-    $reduced_qty = wc_stock_amount( $item->get_meta( '_reduced_stock', true ) );
+    $reduced_qty = wc_stock_amount( wc_suf_get_order_item_reduced_stock_qty( $item ) );
     if ( $target_qty <= $reduced_qty ) {
         return $prevent;
     }
