@@ -1751,8 +1751,11 @@ add_shortcode('stock_update_form', function($atts){
         return '<div dir="rtl" style="color:#b91c1c">این فرم فقط برای کاربران با نقش formeditor، marjoo، sale یا tehsale در دسترس است.</div>';
     }
     $is_marjoo = wc_suf_current_user_has_role( 'marjoo' );
-    $is_sale_only = wc_suf_current_user_has_role( 'sale' ) && ! wc_suf_current_user_has_role( 'formeditor' );
-    $is_teh_sale_only = wc_suf_current_user_has_role( 'tehsale' ) && ! wc_suf_current_user_has_role( 'formeditor' );
+    $has_formeditor = wc_suf_current_user_has_role( 'formeditor' );
+    $has_sale_role = wc_suf_current_user_has_role( 'sale' );
+    $has_teh_sale_role = wc_suf_current_user_has_role( 'tehsale' );
+    $is_sale_only = $has_sale_role && ! $has_teh_sale_role && ! $has_formeditor;
+    $is_teh_sale_only = $has_teh_sale_role && ! $has_sale_role && ! $has_formeditor;
     $atts = shortcode_atts(['key' => ''], $atts, 'stock_update_form');
     $current_user = wp_get_current_user();
     $display_name = trim( (string) $current_user->first_name . ' ' . (string) $current_user->last_name );
@@ -1871,6 +1874,24 @@ add_shortcode('stock_update_form', function($atts){
       .wc-suf-optype-btn:hover{border-color:#64748b; background:#f8fafc}
       .wc-suf-optype-btn.is-active{border-color:#2563eb; background:#2563eb; color:#fff; box-shadow:0 0 0 2px #bfdbfe}
       .wc-suf-optype-btn.is-disabled{opacity:.55; cursor:not-allowed}
+      .wc-suf-sale-customer-wrap{display:none; gap:10px; align-items:center; flex-wrap:wrap}
+      .wc-suf-sale-customer-wrap label{min-width:120px}
+      .wc-suf-sale-customer-wrap input{padding:8px; border:1px solid #e5e7eb; border-radius:10px}
+      .wc-suf-sale-customer-wrap #sale-customer-name{min-width:220px}
+      .wc-suf-sale-customer-wrap #sale-customer-mobile{min-width:180px}
+      .wc-suf-sale-customer-wrap #sale-customer-address{min-width:320px}
+      @media (max-width: 768px){
+        #optype-block{gap:10px !important; padding:10px !important}
+        #optype-block > div:first-child{min-width:unset !important; width:100%}
+        .wc-suf-optype-buttons{display:grid; grid-template-columns:1fr; width:100%}
+        .wc-suf-optype-btn{width:100%; justify-content:flex-start; padding:12px}
+        .wc-suf-sale-customer-wrap{gap:8px}
+        .wc-suf-sale-customer-wrap label{min-width:unset; width:100%; font-size:13px}
+        .wc-suf-sale-customer-wrap input,
+        .wc-suf-sale-customer-wrap #sale-customer-name,
+        .wc-suf-sale-customer-wrap #sale-customer-mobile,
+        .wc-suf-sale-customer-wrap #sale-customer-address{width:100%; min-width:unset}
+      }
     </style>
 
     <div id="stock-form" dir="rtl" style="display:grid; gap:12px; align-items:center;">
@@ -1957,13 +1978,13 @@ add_shortcode('stock_update_form', function($atts){
           </select>
         </div>
         
-        <div id="sale-customer-wrap" style="display:none; gap:10px; align-items:center; flex-wrap:wrap">
-          <label for="sale-customer-name" style="min-width:120px">نام و نام خانوادگی:</label>
-          <input id="sale-customer-name" type="text" style="padding:8px; border:1px solid #e5e7eb; border-radius:10px; min-width:220px" placeholder="مثال: علی رضایی">
-          <label for="sale-customer-mobile" style="min-width:120px">شماره موبایل:</label>
-          <input id="sale-customer-mobile" type="tel" style="padding:8px; border:1px solid #e5e7eb; border-radius:10px; min-width:180px" placeholder="۰۹xxxxxxxxx">
-          <label for="sale-customer-address" style="min-width:120px">آدرس:</label>
-          <input id="sale-customer-address" type="text" style="padding:8px; border:1px solid #e5e7eb; border-radius:10px; min-width:320px" placeholder="آدرس کامل مشتری">
+        <div id="sale-customer-wrap" class="wc-suf-sale-customer-wrap">
+          <label for="sale-customer-name">نام و نام خانوادگی:</label>
+          <input id="sale-customer-name" type="text" placeholder="مثال: علی رضایی">
+          <label for="sale-customer-mobile">شماره موبایل:</label>
+          <input id="sale-customer-mobile" type="tel" placeholder="۰۹xxxxxxxxx">
+          <label for="sale-customer-address">آدرس:</label>
+          <input id="sale-customer-address" type="text" placeholder="آدرس کامل مشتری">
         </div>
 
         <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; opacity:.5" id="picker-open-block">
@@ -3049,8 +3070,11 @@ function wc_suf_save_stock_update_handler(){
     $op_type_in  = isset($_POST['op_type']) ? sanitize_text_field( wp_unslash($_POST['op_type']) ) : '';
     $op_type     = in_array($op_type_in, ['in','out','transfer','return','onlyLabel','sale','sale_teh'], true) ? $op_type_in : '';
     $is_marjoo_user = wc_suf_current_user_has_role( 'marjoo' );
-    $is_sale_user = wc_suf_current_user_has_role( 'sale' ) && ! wc_suf_current_user_has_role( 'formeditor' );
-    $is_teh_sale_user = wc_suf_current_user_has_role( 'tehsale' ) && ! wc_suf_current_user_has_role( 'formeditor' );
+    $has_formeditor = wc_suf_current_user_has_role( 'formeditor' );
+    $has_sale_role = wc_suf_current_user_has_role( 'sale' );
+    $has_teh_sale_role = wc_suf_current_user_has_role( 'tehsale' );
+    $is_sale_user = $has_sale_role && ! $has_teh_sale_role && ! $has_formeditor;
+    $is_teh_sale_user = $has_teh_sale_role && ! $has_sale_role && ! $has_formeditor;
 
     if( ! $op_type ){
         wp_send_json_error(['message'=>'نوع عملیات مشخص نیست (ورود/خروج/انتقال/مرجوعی/فروش/فروش تهرانپارس/صرفاً چاپ لیبل).']);
