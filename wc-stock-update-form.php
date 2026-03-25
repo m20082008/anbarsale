@@ -1907,7 +1907,7 @@ add_shortcode('stock_update_form', function($atts){
       .wc-suf-sale-customer-field label{min-width:120px}
       .wc-suf-sale-customer-field input,
       .wc-suf-sale-customer-field textarea{width:100%; padding:8px; border:1px solid #e5e7eb; border-radius:10px}
-      .wc-suf-sale-customer-field textarea{min-height:82px; resize:vertical}
+      .wc-suf-sale-customer-field textarea{min-height:82px; resize:vertical; background:#fff}
       @media (max-width: 768px){
         #optype-block{gap:10px !important; padding:10px !important}
         #optype-block > div:first-child{min-width:unset !important; width:100%}
@@ -2021,12 +2021,12 @@ add_shortcode('stock_update_form', function($atts){
         <div id="sale-customer-wrap" class="wc-suf-sale-customer-wrap">
           <div class="wc-suf-sale-customer-row">
             <div class="wc-suf-sale-customer-field">
-              <label for="sale-customer-name">نام و نام خانوادگی:</label>
-              <input id="sale-customer-name" type="text" placeholder="مثال: علی رضایی">
-            </div>
-            <div class="wc-suf-sale-customer-field">
               <label for="sale-customer-mobile">شماره موبایل:</label>
               <input id="sale-customer-mobile" type="tel" placeholder="۰۹xxxxxxxxx">
+            </div>
+            <div class="wc-suf-sale-customer-field">
+              <label for="sale-customer-name">نام و نام خانوادگی:</label>
+              <input id="sale-customer-name" type="text" placeholder="مثال: علی رضایی">
             </div>
           </div>
           <div class="wc-suf-sale-customer-row">
@@ -2164,6 +2164,14 @@ add_shortcode('stock_update_form', function($atts){
             s = s.replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
             return s.toLowerCase();
         }
+        function normalizeDigits(s){
+            return String(s || '')
+                .replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
+                .replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+        }
+        function normalizeMobileInput(s){
+            return normalizeDigits(s).replace(/[^\d]/g,'');
+        }
 
         function findById(id){ return allProducts.find(p => String(p.id) === String(id)); }
         function findLabelById(id){ const f = findById(id); return f ? f.label : ''; }
@@ -2270,7 +2278,7 @@ add_shortcode('stock_update_form', function($atts){
 
         function isSaleCustomerDataValid(showAlert){
             const name = String(saleCustomerName || '').trim();
-            const mobile = String(saleCustomerMobile || '').trim().replace(/[^\d]/g,'');
+            const mobile = normalizeMobileInput(saleCustomerMobile);
             const address = String(saleCustomerAddress || '').trim();
             if(name.length < 3){
                 if(showAlert) alert('نام و نام خانوادگی را کامل وارد کنید.');
@@ -2972,8 +2980,38 @@ add_shortcode('stock_update_form', function($atts){
             refreshPickerOpenButton();
             $('#btn-save').prop('disabled', !canSave());
         });
+        let saleCustomerLookupTimer = null;
+        let lastLookupMobile = '';
         $('#sale-customer-mobile').on('input', function(){
-            saleCustomerMobile = $(this).val() || '';
+            const normalized = normalizeDigits($(this).val() || '');
+            if ( normalized !== ($(this).val() || '') ) {
+                $(this).val(normalized);
+            }
+            saleCustomerMobile = normalized;
+            const mobile = normalizeMobileInput(saleCustomerMobile);
+            if (saleCustomerLookupTimer) {
+                clearTimeout(saleCustomerLookupTimer);
+            }
+            if (/^0\d{10}$/.test(mobile) && mobile !== lastLookupMobile) {
+                saleCustomerLookupTimer = setTimeout(function(){
+                    $.post(ajaxurl, {
+                        action: 'wc_suf_lookup_sale_customer',
+                        mobile: mobile,
+                        _wpnonce: '<?php echo wp_create_nonce('wc_suf_lookup_sale_customer'); ?>'
+                    }).done(function(res){
+                        if (!res || !res.success || !res.data) return;
+                        const fullName = String(res.data.full_name || '').trim();
+                        if (fullName.length >= 3) {
+                            saleCustomerName = fullName;
+                            $('#sale-customer-name').val(fullName);
+                        }
+                    }).always(function(){
+                        refreshPickerOpenButton();
+                        $('#btn-save').prop('disabled', !canSave());
+                    });
+                }, 250);
+                lastLookupMobile = mobile;
+            }
             refreshPickerOpenButton();
             $('#btn-save').prop('disabled', !canSave());
         });
@@ -3119,6 +3157,67 @@ add_shortcode('stock_update_form', function($atts){
 });
 
 /*--------------------------------------
+| AJAX: جستجوی سریع مشتری بر اساس موبایل
+---------------------------------------*/
+add_action('wp_ajax_wc_suf_lookup_sale_customer','wc_suf_lookup_sale_customer_handler');
+function wc_suf_lookup_sale_customer_handler(){
+    check_ajax_referer('wc_suf_lookup_sale_customer');
+
+    if ( ! wc_suf_current_user_is_pos_manager() ) {
+        wp_send_json_error(['message' => 'دسترسی غیرمجاز.']);
+    }
+
+    $mobile = isset($_POST['mobile']) ? sanitize_text_field( wp_unslash($_POST['mobile']) ) : '';
+    $mobile = preg_replace('/\D+/', '', wc_suf_normalize_digits( $mobile ) );
+    if ( ! preg_match('/^0\d{10}$/', $mobile) ) {
+        wp_send_json_success([ 'found' => false ]);
+    }
+
+    global $wpdb;
+    $found_name = '';
+
+    $user_id = (int) $wpdb->get_var( $wpdb->prepare(
+        "SELECT user_id FROM {$wpdb->usermeta}
+         WHERE meta_key = 'billing_phone'
+           AND REPLACE(REPLACE(REPLACE(meta_value, ' ', ''), '-', ''), '+98', '0') = %s
+         ORDER BY umeta_id DESC LIMIT 1",
+        $mobile
+    ) );
+
+    if ( $user_id > 0 ) {
+        $first_name = trim( (string) get_user_meta( $user_id, 'billing_first_name', true ) );
+        $last_name  = trim( (string) get_user_meta( $user_id, 'billing_last_name', true ) );
+        $full = trim( $first_name . ' ' . $last_name );
+        if ( $full !== '' ) {
+            $found_name = $full;
+        }
+    }
+
+    if ( $found_name === '' ) {
+        $order_id = (int) $wpdb->get_var( $wpdb->prepare(
+            "SELECT post_id FROM {$wpdb->postmeta}
+             WHERE meta_key = '_billing_phone'
+               AND REPLACE(REPLACE(REPLACE(meta_value, ' ', ''), '-', ''), '+98', '0') = %s
+             ORDER BY meta_id DESC LIMIT 1",
+            $mobile
+        ) );
+        if ( $order_id > 0 ) {
+            $first_name = trim( (string) get_post_meta( $order_id, '_billing_first_name', true ) );
+            $last_name  = trim( (string) get_post_meta( $order_id, '_billing_last_name', true ) );
+            $full = trim( $first_name . ' ' . $last_name );
+            if ( $full !== '' ) {
+                $found_name = $full;
+            }
+        }
+    }
+
+    wp_send_json_success([
+        'found' => ( $found_name !== '' ),
+        'full_name' => $found_name,
+    ]);
+}
+
+/*--------------------------------------
 | AJAX: ثبت نهایی (YITH POS)
 ---------------------------------------*/
 add_action('wp_ajax_save_stock_update','wc_suf_save_stock_update_handler');
@@ -3169,6 +3268,7 @@ function wc_suf_save_stock_update_handler(){
     $return_reason = isset($_POST['return_reason']) ? sanitize_text_field( wp_unslash($_POST['return_reason']) ) : '';
     $sale_customer_name = isset($_POST['sale_customer_name']) ? sanitize_text_field( wp_unslash($_POST['sale_customer_name']) ) : '';
     $sale_customer_mobile = isset($_POST['sale_customer_mobile']) ? sanitize_text_field( wp_unslash($_POST['sale_customer_mobile']) ) : '';
+    $sale_customer_mobile = wc_suf_normalize_digits( $sale_customer_mobile );
     $sale_customer_address = isset($_POST['sale_customer_address']) ? sanitize_textarea_field( wp_unslash($_POST['sale_customer_address']) ) : '';
     $transfer_store_id = null;
     if ( $op_type === 'out' ) {
@@ -3213,7 +3313,7 @@ function wc_suf_save_stock_update_handler(){
         if ( mb_strlen( trim( $sale_customer_name ) ) < 3 ) {
             wp_send_json_error(['message'=>'نام و نام خانوادگی مشتری معتبر نیست.']);
         }
-        $sale_customer_mobile = preg_replace('/\D+/', '', $sale_customer_mobile);
+        $sale_customer_mobile = preg_replace('/\D+/', '', wc_suf_normalize_digits( $sale_customer_mobile ) );
         if ( ! preg_match('/^0\d{10}$/', $sale_customer_mobile) ) {
             wp_send_json_error(['message'=>'شماره موبایل باید با 0 شروع شود و دقیقاً 11 رقم باشد.']);
         }
@@ -3455,38 +3555,8 @@ function wc_suf_save_stock_update_handler(){
             $new_qty      = $prod_new;
             $logged_added = $req;
         } elseif ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
-            if ( isset($locked_prod_qty[$pid]) ) {
-                $prod_old = (int) $locked_prod_qty[$pid];
-            } elseif ( $tx_started ) {
-                $prod_old = wc_suf_get_production_stock_qty_for_update_strict( $product );
-                if ( is_wp_error( $prod_old ) ) {
-                    $wpdb->query('ROLLBACK');
-                    wp_send_json_error(['message'=>$prod_old->get_error_message()]);
-                }
-                $prod_old = (int) $prod_old;
-            } else {
-                $prod_old = wc_suf_get_production_stock_qty( $pid );
-            }
-            $prod_new = max( 0, $prod_old - $req );
-            $prod_update_result = wc_suf_set_production_stock_qty( $product, $prod_new );
-            if ( is_wp_error( $prod_update_result ) ) {
-                if ( $tx_started ) {
-                    $wpdb->query('ROLLBACK');
-                }
-                wp_send_json_error(['message'=>$prod_update_result->get_error_message()]);
-            }
-            $destination_old_qty = (int) ( $stock_product->get_stock_quantity() ?? 0 );
-            $main_stock_result = wc_update_product_stock($stock_product, $req, 'increase');
-            if ( false === $main_stock_result ) {
-                if ( $tx_started ) {
-                    $wpdb->query('ROLLBACK');
-                }
-                wp_send_json_error(['message'=>'افزایش موجودی انبار اصلی برای فروش ناموفق بود.']);
-            }
-            $stock_product->save();
-            $destination_new_qty = (int) ( $stock_product->get_stock_quantity() ?? 0 );
-            $old_qty      = $prod_old;
-            $new_qty      = $prod_new;
+            $old_qty = (int) ( $stock_product->get_stock_quantity() ?? 0 );
+            $new_qty = max( 0, (int) $old_qty - $req );
             $logged_added = $req;
 
         } elseif( $op_type === 'return' ){
