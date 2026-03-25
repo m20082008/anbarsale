@@ -1555,6 +1555,17 @@ function wc_suf_enqueue_front_assets() {
     .wc-suf-filter-grid .wc-suf-filter{ display:flex; gap:6px; align-items:center; }
     .wc-suf-filter-grid label{ font-weight:700; font-size:13px; color:#111827; }
     .wc-suf-filter-grid select{ padding:9px 8px; border:1px solid #e5e7eb; border-radius:12px; font-size:13px; background:#fff; min-width:140px; max-width:180px; }
+    .wc-suf-radio-buttons{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .wc-suf-radio-btn{ position:relative; cursor:pointer; }
+    .wc-suf-radio-btn input[type="radio"]{ position:absolute; opacity:0; pointer-events:none; }
+    .wc-suf-radio-btn span{
+        display:inline-flex; align-items:center; justify-content:center;
+        min-height:42px; padding:8px 14px; border:1px solid #d1d5db; border-radius:10px;
+        background:#fff; color:#111827; font-weight:700; transition:all .15s ease;
+    }
+    .wc-suf-radio-btn:hover span{ border-color:#9ca3af; background:#f9fafb; }
+    .wc-suf-radio-btn.is-active span{ border-color:#2563eb; background:#dbeafe; color:#1e3a8a; box-shadow:0 0 0 1px #2563eb inset; }
+    .wc-suf-radio-btn.is-disabled span{ background:#f3f4f6; color:#9ca3af; border-color:#e5e7eb; cursor:not-allowed; }
     #return-destination, #return-reason{ background:#fff !important; color:#111 !important; }
     #return-destination option, #return-reason option{ background:#fff !important; color:#111 !important; }
     ';
@@ -1701,26 +1712,28 @@ add_shortcode('stock_update_form', function($atts){
 
         <div id="optype-block" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; background:#f9fafb; padding:10px 12px; border:1px solid #e5e7eb; border-radius:8px">
           <div style="font-weight:700; min-width:220px">نوع عملیات موجودی / لیبل</div>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <div class="wc-suf-radio-buttons">
+          <label class="wc-suf-radio-btn op-type-btn">
             <input type="radio" name="op-type" value="in" <?php disabled( $is_marjoo ); ?>>
             <span>ورود به انبار تولید</span>
           </label>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <label class="wc-suf-radio-btn op-type-btn">
             <input type="radio" name="op-type" value="out" <?php disabled( $is_marjoo ); ?>>
             <span>خروج از انبار</span>
           </label>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <label class="wc-suf-radio-btn op-type-btn">
             <input type="radio" name="op-type" value="transfer" <?php disabled( $is_marjoo ); ?>>
             <span>انتقال بین انبارها</span>
           </label>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <label class="wc-suf-radio-btn op-type-btn">
             <input type="radio" name="op-type" value="return">
             <span>مرجوعی</span>
           </label>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <label class="wc-suf-radio-btn op-type-btn">
             <input type="radio" name="op-type" value="onlyLabel" <?php disabled( $is_marjoo ); ?>>
             <span>صرفاً چاپ لیبل</span>
           </label>
+          </div>
           <span class="suf-muted">(پس از انتخاب، قابل تغییر نیست مگر با رفرش)</span>
         </div>
 
@@ -2038,6 +2051,14 @@ add_shortcode('stock_update_form', function($atts){
             } else {
                 $btn.css({background:'#bbf7d0', borderColor:'#10b981', color:'#065f46'});
             }
+        }
+        function syncOperationButtonsState(){
+            $('.op-type-btn').each(function(){
+                const $label = $(this);
+                const $input = $label.find('input[name="op-type"]');
+                $label.toggleClass('is-active', $input.is(':checked'));
+                $label.toggleClass('is-disabled', $input.is(':disabled'));
+            });
         }
 
         function renderTable(){
@@ -2370,6 +2391,7 @@ add_shortcode('stock_update_form', function($atts){
             return qty;
         }
 
+        syncOperationButtonsState();
         refreshPickerOpenButton();
         updateModalSubtitle();
 
@@ -2506,6 +2528,7 @@ add_shortcode('stock_update_form', function($atts){
             }
 
             $('input[name="op-type"]').prop('disabled', true);
+            syncOperationButtonsState();
 
             if(opType === 'out'){
                 $('#out-destination-wrap').css('display','flex');
@@ -2613,6 +2636,7 @@ add_shortcode('stock_update_form', function($atts){
             $('label:has(input[name="op-type"][value="onlyLabel"])').hide();
             $('input[name="op-type"][value="return"]').prop('checked', true).trigger('change');
             $('#return-destination').val('teh').trigger('change');
+            syncOperationButtonsState();
         }
 
         $('#return-reason').on('change', function(){
@@ -2690,6 +2714,7 @@ add_shortcode('stock_update_form', function($atts){
                                 if (Object.prototype.hasOwnProperty.call(pickerQty, pid)) pickerQty[pid] = 0;
                             }
                             $('input[name="op-type"]').prop('checked', false).prop('disabled', false);
+                            syncOperationButtonsState();
                             $('input[name="out-destination"]').prop('checked', false);
                             $('#transfer-source').val('');
                             $('#transfer-destination').html('<option value="">انتخاب انبار مقصد...</option>');
