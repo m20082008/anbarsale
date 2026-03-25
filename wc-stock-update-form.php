@@ -693,11 +693,6 @@ function wc_suf_get_order_stock_source( $order ) {
 
     $yith_pos_order_flag = wc_suf_meta_truthy( $order->get_meta( '_yith_pos_order', true ) ) || wc_suf_meta_truthy( $order->get_meta( '_ywpos_order', true ) );
 
-    $pos_store_id = (int) $order->get_meta( '_yith_pos_store', true );
-    if ( $pos_store_id <= 0 ) {
-        $pos_store_id = (int) $order->get_meta( '_ywpos_store', true );
-    }
-
     $reduced_stock_store_id = (int) $order->get_meta( '_yith_pos_reduced_stock_by_store', true );
     if ( $reduced_stock_store_id <= 0 ) {
         $reduced_stock_store_id = (int) $order->get_meta( '_ywpos_reduced_stock_by_store', true );
@@ -706,13 +701,13 @@ function wc_suf_get_order_stock_source( $order ) {
     $tehranpars_store_id = (int) WC_SUF_TEHRANPARS_STORE_ID;
     $is_tehranpars_store = ( $reduced_stock_store_id > 0 && $reduced_stock_store_id === $tehranpars_store_id );
 
-    if ( ! $is_tehranpars_store && $yith_pos_order_flag ) {
-        if ( $pos_store_id <= 0 || $pos_store_id === $tehranpars_store_id ) {
-            $is_tehranpars_store = true;
-        }
-    }
-
-    if ( $is_tehranpars_store ) {
+    /*
+     * قاعده‌ی قطعی:
+     * اگر سفارش با فلگ YITH POS ثبت شده باشد (_yith_pos_order = 1)،
+     * مبدا/مقصد موجودی برای لاگ فروش باید تهرانپارس باشد؛ حتی اگر متای استور
+     * هنوز کامل نشده باشد یا تابع YITH در این لحظه در دسترس نباشد.
+     */
+    if ( $yith_pos_order_flag ) {
         return [
             'is_pos'     => true,
             'destination'=> 'teh',
@@ -721,7 +716,7 @@ function wc_suf_get_order_stock_source( $order ) {
         ];
     }
 
-    if ( $is_pos && function_exists( 'yith_pos_stock_management' ) ) {
+    if ( $is_tehranpars_store ) {
         return [
             'is_pos'     => true,
             'destination'=> 'teh',
@@ -1555,17 +1550,6 @@ function wc_suf_enqueue_front_assets() {
     .wc-suf-filter-grid .wc-suf-filter{ display:flex; gap:6px; align-items:center; }
     .wc-suf-filter-grid label{ font-weight:700; font-size:13px; color:#111827; }
     .wc-suf-filter-grid select{ padding:9px 8px; border:1px solid #e5e7eb; border-radius:12px; font-size:13px; background:#fff; min-width:140px; max-width:180px; }
-    .wc-suf-radio-buttons{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .wc-suf-radio-btn{ position:relative; cursor:pointer; }
-    .wc-suf-radio-btn input[type="radio"]{ position:absolute; opacity:0; pointer-events:none; }
-    .wc-suf-radio-btn span{
-        display:inline-flex; align-items:center; justify-content:center;
-        min-height:42px; padding:8px 14px; border:1px solid #d1d5db; border-radius:10px;
-        background:#fff; color:#111827; font-weight:700; transition:all .15s ease;
-    }
-    .wc-suf-radio-btn:hover span{ border-color:#9ca3af; background:#f9fafb; }
-    .wc-suf-radio-btn.is-active span{ border-color:#2563eb; background:#dbeafe; color:#1e3a8a; box-shadow:0 0 0 1px #2563eb inset; }
-    .wc-suf-radio-btn.is-disabled span{ background:#f3f4f6; color:#9ca3af; border-color:#e5e7eb; cursor:not-allowed; }
     #return-destination, #return-reason{ background:#fff !important; color:#111 !important; }
     #return-destination option, #return-reason option{ background:#fff !important; color:#111 !important; }
     ';
@@ -1712,28 +1696,26 @@ add_shortcode('stock_update_form', function($atts){
 
         <div id="optype-block" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; background:#f9fafb; padding:10px 12px; border:1px solid #e5e7eb; border-radius:8px">
           <div style="font-weight:700; min-width:220px">نوع عملیات موجودی / لیبل</div>
-          <div class="wc-suf-radio-buttons">
-          <label class="wc-suf-radio-btn op-type-btn">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
             <input type="radio" name="op-type" value="in" <?php disabled( $is_marjoo ); ?>>
             <span>ورود به انبار تولید</span>
           </label>
-          <label class="wc-suf-radio-btn op-type-btn">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
             <input type="radio" name="op-type" value="out" <?php disabled( $is_marjoo ); ?>>
             <span>خروج از انبار</span>
           </label>
-          <label class="wc-suf-radio-btn op-type-btn">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
             <input type="radio" name="op-type" value="transfer" <?php disabled( $is_marjoo ); ?>>
             <span>انتقال بین انبارها</span>
           </label>
-          <label class="wc-suf-radio-btn op-type-btn">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
             <input type="radio" name="op-type" value="return">
             <span>مرجوعی</span>
           </label>
-          <label class="wc-suf-radio-btn op-type-btn">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
             <input type="radio" name="op-type" value="onlyLabel" <?php disabled( $is_marjoo ); ?>>
             <span>صرفاً چاپ لیبل</span>
           </label>
-          </div>
           <span class="suf-muted">(پس از انتخاب، قابل تغییر نیست مگر با رفرش)</span>
         </div>
 
@@ -2051,14 +2033,6 @@ add_shortcode('stock_update_form', function($atts){
             } else {
                 $btn.css({background:'#bbf7d0', borderColor:'#10b981', color:'#065f46'});
             }
-        }
-        function syncOperationButtonsState(){
-            $('.op-type-btn').each(function(){
-                const $label = $(this);
-                const $input = $label.find('input[name="op-type"]');
-                $label.toggleClass('is-active', $input.is(':checked'));
-                $label.toggleClass('is-disabled', $input.is(':disabled'));
-            });
         }
 
         function renderTable(){
@@ -2391,7 +2365,6 @@ add_shortcode('stock_update_form', function($atts){
             return qty;
         }
 
-        syncOperationButtonsState();
         refreshPickerOpenButton();
         updateModalSubtitle();
 
@@ -2528,7 +2501,6 @@ add_shortcode('stock_update_form', function($atts){
             }
 
             $('input[name="op-type"]').prop('disabled', true);
-            syncOperationButtonsState();
 
             if(opType === 'out'){
                 $('#out-destination-wrap').css('display','flex');
@@ -2636,7 +2608,6 @@ add_shortcode('stock_update_form', function($atts){
             $('label:has(input[name="op-type"][value="onlyLabel"])').hide();
             $('input[name="op-type"][value="return"]').prop('checked', true).trigger('change');
             $('#return-destination').val('teh').trigger('change');
-            syncOperationButtonsState();
         }
 
         $('#return-reason').on('change', function(){
@@ -2714,7 +2685,6 @@ add_shortcode('stock_update_form', function($atts){
                                 if (Object.prototype.hasOwnProperty.call(pickerQty, pid)) pickerQty[pid] = 0;
                             }
                             $('input[name="op-type"]').prop('checked', false).prop('disabled', false);
-                            syncOperationButtonsState();
                             $('input[name="out-destination"]').prop('checked', false);
                             $('#transfer-source').val('');
                             $('#transfer-destination').html('<option value="">انتخاب انبار مقصد...</option>');
@@ -3983,43 +3953,14 @@ function wc_suf_render_detailed_logs_html( $args = [] ) {
         <?php if ( $total_pages > 1 ) :
             $page_base_args = $_GET;
             unset($page_base_args['paged']);
-            $page_numbers = [1];
-            $window_end = min(5, $total_pages);
-            for ( $i = 2; $i <= $window_end; $i++ ) {
-                $page_numbers[] = $i;
-            }
-            if ( ! in_array($current_page, $page_numbers, true) && $current_page !== $total_pages ) {
-                $page_numbers[] = $current_page;
-            }
-            if ( $total_pages > 1 ) {
-                $page_numbers[] = $total_pages;
-            }
-            $page_numbers = array_values(array_unique($page_numbers));
-            sort($page_numbers);
         ?>
             <div style="margin-top:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-                <span style="font-weight:700">صفحه <?php echo esc_html($current_page); ?> از <?php echo esc_html($total_pages); ?> (هر صفحه 100 مورد)</span>
+                <span style="font-weight:700">صفحه <?php echo esc_html($current_page); ?> از <?php echo esc_html($total_pages); ?></span>
                 <?php if ( $current_page > 1 ) :
                     $prev_url = add_query_arg( array_merge($page_base_args, ['paged' => $current_page - 1]) );
                 ?>
                     <a class="button" href="<?php echo esc_url($prev_url); ?>">&larr; قبلی</a>
                 <?php endif; ?>
-
-                <?php
-                $last_printed = 0;
-                foreach ( $page_numbers as $page_num ) :
-                    if ( $last_printed > 0 && $page_num - $last_printed > 1 ) {
-                        echo '<span style="padding:0 4px">…</span>';
-                    }
-                    $page_url = add_query_arg( array_merge($page_base_args, ['paged' => $page_num]) );
-                    $is_current = ( (int) $page_num === (int) $current_page );
-                ?>
-                    <a class="button<?php echo $is_current ? ' button-primary' : ''; ?>" href="<?php echo esc_url($page_url); ?>"><?php echo esc_html($page_num); ?></a>
-                <?php
-                    $last_printed = $page_num;
-                endforeach;
-                ?>
-
                 <?php if ( $current_page < $total_pages ) :
                     $next_url = add_query_arg( array_merge($page_base_args, ['paged' => $current_page + 1]) );
                 ?>
@@ -4041,20 +3982,33 @@ function wc_suf_render_detailed_logs_page(){
 }
 
 /*--------------------------------------
-| Admin: لاگ دقیق عملیات
+| Admin: گزارش گروهی
 ---------------------------------------*/
 add_action('admin_menu', function(){
     $cap = current_user_can('manage_woocommerce') ? 'manage_woocommerce' : 'manage_options';
     add_menu_page(
+        'گزارش تغییر موجودی',
+        'گزارش موجودی',
+        $cap,
+        'wc-stock-audit',
+        'wc_suf_render_audit_page',
+        'dashicons-clipboard',
+        56
+    );
+
+    add_submenu_page(
+        'wc-stock-audit',
         'لاگ دقیق عملیات',
         'لاگ دقیق عملیات',
         $cap,
         'wc-stock-audit-detailed',
-        'wc_suf_render_detailed_logs_page',
-        'dashicons-clipboard',
-        56
+        'wc_suf_render_detailed_logs_page'
     );
 });
+function wc_suf_render_audit_page(){
+    if( ! current_user_can('manage_woocommerce') && ! current_user_can('manage_options') ) return;
+    echo wc_suf_render_audit_html();
+}
 
 /*--------------------------------------
 | Shortcode گزارش فرانت: [stock_audit_report]
