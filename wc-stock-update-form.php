@@ -1132,7 +1132,6 @@ function wc_suf_capture_order_stock_snapshot( $order ) {
         return [];
     }
 
-    $stock_source = wc_suf_get_order_stock_source( $order );
     $snapshot = [];
     $items = $order->get_items( 'line_item' );
     foreach ( $items as $item ) {
@@ -1155,7 +1154,10 @@ function wc_suf_capture_order_stock_snapshot( $order ) {
             continue;
         }
 
-        $stock_qty = wc_suf_get_order_stock_qty_by_source( $stock_product, $stock_source );
+        $stock_qty = $stock_product->get_stock_quantity();
+        if ( $stock_qty === null ) {
+            continue;
+        }
 
         $snapshot[ $managed_product_id ] = [
             'product_id'      => $managed_product_id,
@@ -1166,8 +1168,6 @@ function wc_suf_capture_order_stock_snapshot( $order ) {
             'parent_id'       => (int) $stock_product->get_parent_id(),
             'attributes_text' => wc_suf_get_product_attributes_text( $stock_product ),
             'qty'             => (float) $stock_qty,
-            'destination'     => (string) $stock_source['destination'],
-            'source_label'    => (string) $stock_source['label'],
         ];
     }
 
@@ -1237,7 +1237,6 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
     $order_number = (string) $order->get_order_number();
     $batch_code = 'order_edit_' . $order_number;
     $created_at_mysql = current_time( 'mysql' );
-    $stock_source = wc_suf_get_order_stock_source( $order );
 
     $current_user = wp_get_current_user();
     $user_id = get_current_user_id();
@@ -1274,10 +1273,9 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
 
         $direction = ( $delta > 0 ) ? 'increase' : 'decrease';
         $purpose = sprintf(
-            'ویرایش سفارش #%s | %s %s | %s → %s',
+            'ویرایش سفارش #%s | %s موجودی اصلی ووکامرس | %s → %s',
             $order_number,
             ( $direction === 'increase' ? 'افزایش' : 'کاهش' ),
-            (string) $stock_source['label'],
             wc_format_decimal( $old_qty, 4 ),
             wc_format_decimal( $new_qty, 4 )
         );
@@ -1287,7 +1285,7 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
             [
                 'batch_code'           => $batch_code,
                 'operation'            => 'sale_edit',
-                'destination'          => (string) $stock_source['destination'],
+                'destination'          => 'main',
                 'product_id'           => (int) $meta['product_id'],
                 'product_name'         => (string) $meta['product_name'],
                 'sku'                  => (string) $meta['sku'],
