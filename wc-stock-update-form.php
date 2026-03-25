@@ -3488,6 +3488,10 @@ function wc_suf_save_stock_update_handler(){
     if ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
         try {
             $sale_order = wc_create_order();
+            if ( is_wp_error( $sale_order ) ) {
+                throw new RuntimeException( $sale_order->get_error_message() );
+            }
+
             foreach ( $items as $it ) {
                 $pid = isset($it['id'])  ? absint($it['id']) : 0;
                 $req = isset($it['qty']) ? (int) $it['qty']  : 0;
@@ -3515,7 +3519,7 @@ function wc_suf_save_stock_update_handler(){
             $sale_order->set_status( 'processing', 'ثبت سفارش از فرم عملیات فروش انبار تولید.' );
             $sale_order->save();
             wc_reduce_stock_levels( $sale_order->get_id() );
-        } catch ( Exception $e ) {
+        } catch ( Throwable $e ) {
             if ( $tx_started ) {
                 $wpdb->query('ROLLBACK');
             }
