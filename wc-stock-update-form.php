@@ -1691,31 +1691,47 @@ add_shortcode('stock_update_form', function($atts){
     if (!empty($bucketed[0])) $emit_group(0, $bucketed[0]);
 
     ob_start(); ?>
+    <style>
+      .wc-suf-optype-buttons{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+      .wc-suf-optype-btn{
+        display:inline-flex; align-items:center; justify-content:center; min-height:42px;
+        padding:8px 14px; border:1px solid #cbd5e1; border-radius:10px;
+        background:#fff; color:#0f172a; font-weight:700; cursor:pointer; user-select:none;
+        transition:all .15s ease;
+      }
+      .wc-suf-optype-btn input{position:absolute; opacity:0; pointer-events:none}
+      .wc-suf-optype-btn:hover{border-color:#64748b; background:#f8fafc}
+      .wc-suf-optype-btn.is-active{border-color:#2563eb; background:#2563eb; color:#fff; box-shadow:0 0 0 2px #bfdbfe}
+      .wc-suf-optype-btn.is-disabled{opacity:.55; cursor:not-allowed}
+    </style>
+
     <div id="stock-form" dir="rtl" style="display:grid; gap:12px; align-items:center;">
         <div style="background:#ecfeff; border:1px solid #bae6fd; color:#0f172a; border-radius:10px; padding:10px 12px; font-weight:700">کاربر: <?php echo esc_html($display_name); ?></div>
 
         <div id="optype-block" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; background:#f9fafb; padding:10px 12px; border:1px solid #e5e7eb; border-radius:8px">
           <div style="font-weight:700; min-width:220px">نوع عملیات موجودی / لیبل</div>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <div class="wc-suf-optype-buttons">
+          <label class="wc-suf-optype-btn" data-op="in">
             <input type="radio" name="op-type" value="in" <?php disabled( $is_marjoo ); ?>>
             <span>ورود به انبار تولید</span>
           </label>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <label class="wc-suf-optype-btn" data-op="out">
             <input type="radio" name="op-type" value="out" <?php disabled( $is_marjoo ); ?>>
             <span>خروج از انبار</span>
           </label>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <label class="wc-suf-optype-btn" data-op="transfer">
             <input type="radio" name="op-type" value="transfer" <?php disabled( $is_marjoo ); ?>>
             <span>انتقال بین انبارها</span>
           </label>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <label class="wc-suf-optype-btn" data-op="return">
             <input type="radio" name="op-type" value="return">
             <span>مرجوعی</span>
           </label>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+          <label class="wc-suf-optype-btn" data-op="onlyLabel">
             <input type="radio" name="op-type" value="onlyLabel" <?php disabled( $is_marjoo ); ?>>
             <span>صرفاً چاپ لیبل</span>
           </label>
+          </div>
           <span class="suf-muted">(پس از انتخاب، قابل تغییر نیست مگر با رفرش)</span>
         </div>
 
@@ -1860,6 +1876,15 @@ add_shortcode('stock_update_form', function($atts){
         const $info    = $('#wc-suf-picker-selected-info');
         const $filters = $('#wc-suf-picker-filters');
         const $modalSubtitle = $('#wc-suf-modal-subtitle');
+
+        function syncOpTypeButtonsState(){
+            $('.wc-suf-optype-btn').each(function(){
+                const $label = $(this);
+                const $radio = $label.find('input[name="op-type"]');
+                $label.toggleClass('is-active', $radio.is(':checked'));
+                $label.toggleClass('is-disabled', $radio.is(':disabled') && !$radio.is(':checked'));
+            });
+        }
 
         const pickerQty = Object.create(null);
         const activeFilters = Object.create(null); // tax => selectedValueNormalized
@@ -2496,11 +2521,13 @@ add_shortcode('stock_update_form', function($atts){
             if(isMarjoo && opType !== 'return'){
                 opType = null;
                 $(this).prop('checked', false);
+                syncOpTypeButtonsState();
                 alert('کاربر مرجوع فقط مجاز به عملیات مرجوعی است.');
                 return;
             }
 
             $('input[name="op-type"]').prop('disabled', true);
+            syncOpTypeButtonsState();
 
             if(opType === 'out'){
                 $('#out-destination-wrap').css('display','flex');
@@ -2602,13 +2629,15 @@ add_shortcode('stock_update_form', function($atts){
         });
 
         if(isMarjoo){
-            $('label:has(input[name="op-type"][value="in"])').hide();
-            $('label:has(input[name="op-type"][value="out"])').hide();
-            $('label:has(input[name="op-type"][value="transfer"])').hide();
-            $('label:has(input[name="op-type"][value="onlyLabel"])').hide();
+            $('.wc-suf-optype-btn[data-op="in"]').hide();
+            $('.wc-suf-optype-btn[data-op="out"]').hide();
+            $('.wc-suf-optype-btn[data-op="transfer"]').hide();
+            $('.wc-suf-optype-btn[data-op="onlyLabel"]').hide();
             $('input[name="op-type"][value="return"]').prop('checked', true).trigger('change');
             $('#return-destination').val('teh').trigger('change');
         }
+
+        syncOpTypeButtonsState();
 
         $('#return-reason').on('change', function(){
             if(opType !== 'return') return;
@@ -3953,14 +3982,41 @@ function wc_suf_render_detailed_logs_html( $args = [] ) {
         <?php if ( $total_pages > 1 ) :
             $page_base_args = $_GET;
             unset($page_base_args['paged']);
+            $window_start = max(1, $current_page - 2);
+            $window_end = min($total_pages, $current_page + 2);
+            $page_numbers = [1];
+            for ( $i = $window_start; $i <= $window_end; $i++ ) {
+                $page_numbers[] = $i;
+            }
+            $page_numbers[] = $total_pages;
+            $page_numbers = array_values(array_unique(array_map('intval', $page_numbers)));
+            sort($page_numbers);
         ?>
             <div style="margin-top:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-                <span style="font-weight:700">صفحه <?php echo esc_html($current_page); ?> از <?php echo esc_html($total_pages); ?></span>
+                <span style="font-weight:700">صفحه <?php echo esc_html($current_page); ?> از <?php echo esc_html($total_pages); ?> (هر صفحه <?php echo esc_html($limit); ?> رکورد)</span>
                 <?php if ( $current_page > 1 ) :
                     $prev_url = add_query_arg( array_merge($page_base_args, ['paged' => $current_page - 1]) );
                 ?>
                     <a class="button" href="<?php echo esc_url($prev_url); ?>">&larr; قبلی</a>
                 <?php endif; ?>
+                <?php
+                $last_printed = 0;
+                foreach ( $page_numbers as $pn ) :
+                    if ( $last_printed > 0 && $pn - $last_printed > 1 ) {
+                        echo '<span style="padding:0 4px">…</span>';
+                    }
+                    $is_current = ( $pn === $current_page );
+                    $pn_url = add_query_arg( array_merge($page_base_args, ['paged' => $pn]) );
+                ?>
+                    <?php if ( $is_current ) : ?>
+                        <span class="button button-primary" style="cursor:default"><?php echo esc_html($pn); ?></span>
+                    <?php else : ?>
+                        <a class="button" href="<?php echo esc_url($pn_url); ?>"><?php echo esc_html($pn); ?></a>
+                    <?php endif; ?>
+                <?php
+                    $last_printed = $pn;
+                endforeach;
+                ?>
                 <?php if ( $current_page < $total_pages ) :
                     $next_url = add_query_arg( array_merge($page_base_args, ['paged' => $current_page + 1]) );
                 ?>
@@ -3987,22 +4043,13 @@ function wc_suf_render_detailed_logs_page(){
 add_action('admin_menu', function(){
     $cap = current_user_can('manage_woocommerce') ? 'manage_woocommerce' : 'manage_options';
     add_menu_page(
-        'گزارش تغییر موجودی',
-        'گزارش موجودی',
-        $cap,
-        'wc-stock-audit',
-        'wc_suf_render_audit_page',
-        'dashicons-clipboard',
-        56
-    );
-
-    add_submenu_page(
-        'wc-stock-audit',
         'لاگ دقیق عملیات',
         'لاگ دقیق عملیات',
         $cap,
         'wc-stock-audit-detailed',
-        'wc_suf_render_detailed_logs_page'
+        'wc_suf_render_detailed_logs_page',
+        'dashicons-clipboard',
+        56
     );
 });
 function wc_suf_render_audit_page(){
