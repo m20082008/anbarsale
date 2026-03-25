@@ -1754,8 +1754,18 @@ add_shortcode('stock_update_form', function($atts){
     $has_formeditor = wc_suf_current_user_has_role( 'formeditor' );
     $has_sale_role = wc_suf_current_user_has_role( 'sale' );
     $has_teh_sale_role = wc_suf_current_user_has_role( 'tehsale' );
-    $is_sale_only = $has_sale_role && ! $has_teh_sale_role && ! $has_formeditor;
-    $is_teh_sale_only = $has_teh_sale_role && ! $has_sale_role && ! $has_formeditor;
+    $allowed_ops = $has_formeditor ? ['in','out','transfer','return','sale','sale_teh','onlyLabel'] : [];
+    if ( $is_marjoo ) {
+        $allowed_ops[] = 'return';
+    }
+    if ( $has_sale_role ) {
+        $allowed_ops[] = 'sale';
+    }
+    if ( $has_teh_sale_role ) {
+        $allowed_ops[] = 'sale_teh';
+    }
+    $allowed_ops = array_values( array_unique( $allowed_ops ) );
+    $is_marjoo_only = $is_marjoo && ! $has_sale_role && ! $has_teh_sale_role && ! $has_formeditor;
     $atts = shortcode_atts(['key' => ''], $atts, 'stock_update_form');
     $current_user = wp_get_current_user();
     $display_name = trim( (string) $current_user->first_name . ' ' . (string) $current_user->last_name );
@@ -1900,34 +1910,48 @@ add_shortcode('stock_update_form', function($atts){
         <div id="optype-block" style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; background:#f9fafb; padding:10px 12px; border:1px solid #e5e7eb; border-radius:8px">
           <div style="font-weight:700; min-width:220px">نوع عملیات موجودی / لیبل</div>
           <div class="wc-suf-optype-buttons">
+          <?php if ( in_array( 'in', $allowed_ops, true ) ) : ?>
           <label class="wc-suf-optype-btn" data-op="in">
-            <input type="radio" name="op-type" value="in" <?php disabled( $is_marjoo ); ?>>
+            <input type="radio" name="op-type" value="in">
             <span>ورود به انبار تولید</span>
           </label>
+          <?php endif; ?>
+          <?php if ( in_array( 'out', $allowed_ops, true ) ) : ?>
           <label class="wc-suf-optype-btn" data-op="out">
-            <input type="radio" name="op-type" value="out" <?php disabled( $is_marjoo ); ?>>
+            <input type="radio" name="op-type" value="out">
             <span>خروج از انبار</span>
           </label>
+          <?php endif; ?>
+          <?php if ( in_array( 'transfer', $allowed_ops, true ) ) : ?>
           <label class="wc-suf-optype-btn" data-op="transfer">
-            <input type="radio" name="op-type" value="transfer" <?php disabled( $is_marjoo ); ?>>
+            <input type="radio" name="op-type" value="transfer">
             <span>انتقال بین انبارها</span>
           </label>
+          <?php endif; ?>
+          <?php if ( in_array( 'return', $allowed_ops, true ) ) : ?>
           <label class="wc-suf-optype-btn" data-op="return">
             <input type="radio" name="op-type" value="return">
             <span>مرجوعی</span>
           </label>
+          <?php endif; ?>
+          <?php if ( in_array( 'sale', $allowed_ops, true ) ) : ?>
           <label class="wc-suf-optype-btn" data-op="sale">
             <input type="radio" name="op-type" value="sale">
             <span>فروش</span>
           </label>
+          <?php endif; ?>
+          <?php if ( in_array( 'sale_teh', $allowed_ops, true ) ) : ?>
           <label class="wc-suf-optype-btn" data-op="sale_teh">
             <input type="radio" name="op-type" value="sale_teh">
             <span>فروش برای تهرانپارس</span>
           </label>
+          <?php endif; ?>
+          <?php if ( in_array( 'onlyLabel', $allowed_ops, true ) ) : ?>
           <label class="wc-suf-optype-btn" data-op="onlyLabel">
-            <input type="radio" name="op-type" value="onlyLabel" <?php disabled( $is_marjoo ); ?>>
+            <input type="radio" name="op-type" value="onlyLabel">
             <span>صرفاً چاپ لیبل</span>
           </label>
+          <?php endif; ?>
           </div>
           <span class="suf-muted">(پس از انتخاب، قابل تغییر نیست مگر با رفرش)</span>
         </div>
@@ -1963,7 +1987,7 @@ add_shortcode('stock_update_form', function($atts){
           <label for="return-destination" style="min-width:120px">انبار مرجوعی:</label>
           <select id="return-destination" style="padding:8px; border:1px solid #e5e7eb; border-radius:10px; min-width:180px">
             <option value="">انتخاب انبار...</option>
-            <?php if ( ! $is_marjoo ) : ?>
+            <?php if ( ! $is_marjoo_only ) : ?>
             <option value="main">انبار اصلی</option>
             <?php endif; ?>
             <option value="teh">انبار تهران پارس</option>
@@ -2060,9 +2084,8 @@ add_shortcode('stock_update_form', function($atts){
     jQuery(function($){
         const allProducts = <?php echo wp_json_encode($all); ?>;
         const pickerAttrDefs = <?php echo wp_json_encode($picker_attr_defs); ?>;
-        const isMarjoo = <?php echo $is_marjoo ? 'true' : 'false'; ?>;
-        const isSaleOnly = <?php echo $is_sale_only ? 'true' : 'false'; ?>;
-        const isTehSaleOnly = <?php echo $is_teh_sale_only ? 'true' : 'false'; ?>;
+        const isMarjooOnly = <?php echo $is_marjoo_only ? 'true' : 'false'; ?>;
+        const allowedOps = <?php echo wp_json_encode( $allowed_ops ); ?>;
 
         const defaultShortcodeKey = "<?php echo esc_js($atts['key']); ?>";
         const urlParams = new URLSearchParams(window.location.search);
@@ -2195,27 +2218,23 @@ add_shortcode('stock_update_form', function($atts){
 
         function canSave(){
             if(opType !== 'in' && opType !== 'out' && opType !== 'transfer' && opType !== 'return' && opType !== 'onlyLabel' && opType !== 'sale' && opType !== 'sale_teh') return false;
-            if(isMarjoo && opType !== 'return') return false;
-            if(isSaleOnly && opType !== 'sale') return false;
-            if(isTehSaleOnly && opType !== 'sale_teh') return false;
+            if(allowedOps.indexOf(opType) === -1) return false;
             if(opType === 'out' && !outDestination) return false;
             if(opType === 'transfer' && (!transferSource || !transferDestination || transferSource === transferDestination)) return false;
             if(opType === 'return' && (!returnDestination || !returnReason)) return false;
             if((opType === 'sale' || opType === 'sale_teh') && !isSaleCustomerDataValid(false)) return false;
-            if(isMarjoo && returnDestination !== 'teh') return false;
+            if(isMarjooOnly && returnDestination !== 'teh') return false;
             return items.length > 0;
         }
 
         function canOpenPicker(){
             if(!opType) return false;
-            if(isMarjoo && opType !== 'return') return false;
-            if(isSaleOnly && opType !== 'sale') return false;
-            if(isTehSaleOnly && opType !== 'sale_teh') return false;
+            if(allowedOps.indexOf(opType) === -1) return false;
             if(opType === 'out' && !outDestination) return false;
             if(opType === 'transfer' && (!transferSource || !transferDestination || transferSource === transferDestination)) return false;
             if(opType === 'return' && (!returnDestination || !returnReason)) return false;
             if((opType === 'sale' || opType === 'sale_teh') && !isSaleCustomerDataValid(false)) return false;
-            if(isMarjoo && returnDestination !== 'teh') return false;
+            if(isMarjooOnly && returnDestination !== 'teh') return false;
             return true;
         }
 
@@ -2754,11 +2773,11 @@ add_shortcode('stock_update_form', function($atts){
             if(opType) return;
             opType = $(this).val();
 
-            if(isMarjoo && opType !== 'return'){
+            if(allowedOps.indexOf(opType) === -1){
                 opType = null;
                 $(this).prop('checked', false);
                 syncOpTypeButtonsState();
-                alert('کاربر مرجوع فقط مجاز به عملیات مرجوعی است.');
+                alert('شما به نوع عملیات انتخابی دسترسی ندارید.');
                 return;
             }
 
@@ -2861,7 +2880,7 @@ add_shortcode('stock_update_form', function($atts){
         $('#return-destination').on('change', function(){
             if(opType !== 'return') return;
             returnDestination = $(this).val() || null;
-            if(isMarjoo && returnDestination !== 'teh'){
+            if(isMarjooOnly && returnDestination !== 'teh'){
                 returnDestination = 'teh';
                 $(this).val('teh');
             }
@@ -2873,21 +2892,11 @@ add_shortcode('stock_update_form', function($atts){
             }
         });
 
-        if(isMarjoo){
-            $('.wc-suf-optype-btn[data-op="in"]').hide();
-            $('.wc-suf-optype-btn[data-op="out"]').hide();
-            $('.wc-suf-optype-btn[data-op="transfer"]').hide();
-            $('.wc-suf-optype-btn[data-op="sale"]').hide();
-            $('.wc-suf-optype-btn[data-op="sale_teh"]').hide();
-            $('.wc-suf-optype-btn[data-op="onlyLabel"]').hide();
+        if(isMarjooOnly){
             $('input[name="op-type"][value="return"]').prop('checked', true).trigger('change');
             $('#return-destination').val('teh').trigger('change');
-        } else if (isSaleOnly) {
-            $('.wc-suf-optype-btn').hide();
-            $('.wc-suf-optype-btn[data-op="sale"]').show();
-        } else if (isTehSaleOnly) {
-            $('.wc-suf-optype-btn').hide();
-            $('.wc-suf-optype-btn[data-op="sale_teh"]').show();
+        } else if (allowedOps.length === 1) {
+            $('input[name="op-type"][value="' + allowedOps[0] + '"]').prop('checked', true).trigger('change');
         }
 
         syncOpTypeButtonsState();
@@ -3073,24 +3082,24 @@ function wc_suf_save_stock_update_handler(){
     $has_formeditor = wc_suf_current_user_has_role( 'formeditor' );
     $has_sale_role = wc_suf_current_user_has_role( 'sale' );
     $has_teh_sale_role = wc_suf_current_user_has_role( 'tehsale' );
-    $is_sale_user = $has_sale_role && ! $has_teh_sale_role && ! $has_formeditor;
-    $is_teh_sale_user = $has_teh_sale_role && ! $has_sale_role && ! $has_formeditor;
-    $is_dual_sale_user = $has_sale_role && $has_teh_sale_role && ! $has_formeditor;
+    $allowed_ops = $has_formeditor ? ['in','out','transfer','return','sale','sale_teh','onlyLabel'] : [];
+    if ( $is_marjoo_user ) {
+        $allowed_ops[] = 'return';
+    }
+    if ( $has_sale_role ) {
+        $allowed_ops[] = 'sale';
+    }
+    if ( $has_teh_sale_role ) {
+        $allowed_ops[] = 'sale_teh';
+    }
+    $allowed_ops = array_values( array_unique( $allowed_ops ) );
+    $is_marjoo_only_user = $is_marjoo_user && ! $has_sale_role && ! $has_teh_sale_role && ! $has_formeditor;
 
     if( ! $op_type ){
         wp_send_json_error(['message'=>'نوع عملیات مشخص نیست (ورود/خروج/انتقال/مرجوعی/فروش/فروش تهرانپارس/صرفاً چاپ لیبل).']);
     }
-    if ( $is_marjoo_user && $op_type !== 'return' ) {
-        wp_send_json_error(['message'=>'کاربر مرجوع فقط مجاز به ثبت عملیات مرجوعی است.']);
-    }
-    if ( $is_sale_user && $op_type !== 'sale' ) {
-        wp_send_json_error(['message'=>'کاربر فروش فقط مجاز به ثبت عملیات فروش است.']);
-    }
-    if ( $is_teh_sale_user && $op_type !== 'sale_teh' ) {
-        wp_send_json_error(['message'=>'کاربر فروش تهرانپارس فقط مجاز به ثبت عملیات فروش تهرانپارس است.']);
-    }
-    if ( $is_dual_sale_user && ! in_array( $op_type, ['sale', 'sale_teh'], true ) ) {
-        wp_send_json_error(['message'=>'کاربر فروش/فروش تهرانپارس فقط مجاز به ثبت عملیات فروش است.']);
+    if ( ! in_array( $op_type, $allowed_ops, true ) ) {
+        wp_send_json_error(['message'=>'شما به نوع عملیات انتخابی دسترسی ندارید.']);
     }
 
     $out_destination = isset($_POST['out_destination']) ? sanitize_text_field( wp_unslash($_POST['out_destination']) ) : '';
@@ -3125,7 +3134,7 @@ function wc_suf_save_stock_update_handler(){
         if ( ! in_array( $return_destination, ['main','teh'], true ) ) {
             wp_send_json_error(['message'=>'انبار مرجوعی مشخص نیست.']);
         }
-        if ( $is_marjoo_user && $return_destination !== 'teh' ) {
+        if ( $is_marjoo_only_user && $return_destination !== 'teh' ) {
             wp_send_json_error(['message'=>'کاربر مرجوع فقط مجاز به مرجوعی به انبار تهران پارس است.']);
         }
         $valid_return_reasons = [
