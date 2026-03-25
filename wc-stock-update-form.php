@@ -3232,6 +3232,7 @@ function wc_suf_save_stock_update_handler(){
     if ($op_type === 'out' || $op_type === 'transfer' || $op_type === 'sale' || $op_type === 'sale_teh') {
         $insufficient = [];
         $locked_old_qty = [];
+        $locked_prod_qty = [];
         foreach($items as $it){
             $pid = isset($it['id'])  ? absint($it['id']) : 0;
             $req = isset($it['qty']) ? (int) $it['qty']  : 0;
@@ -3243,6 +3244,7 @@ function wc_suf_save_stock_update_handler(){
                 $old = $tx_started ? wc_suf_get_production_stock_qty_for_update( $product ) : wc_suf_get_production_stock_qty( $pid );
             } elseif ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
                 $old = (int) ( wc_suf_get_stock_product( $product )->get_stock_quantity() ?? 0 );
+                $locked_prod_qty[$pid] = $tx_started ? wc_suf_get_production_stock_qty_for_update( $product ) : wc_suf_get_production_stock_qty( $pid );
             } else {
                 if ( $transfer_source === 'main' ) {
                     $old = (int) ( wc_suf_get_stock_product( $product )->get_stock_quantity() ?? 0 );
@@ -3428,7 +3430,7 @@ function wc_suf_save_stock_update_handler(){
             $new_qty      = $prod_new;
             $logged_added = $req;
         } elseif ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
-            $prod_old = isset($locked_old_qty[$pid]) ? (int) $locked_old_qty[$pid] : ( $tx_started ? wc_suf_get_production_stock_qty_for_update( $product ) : wc_suf_get_production_stock_qty( $pid ) );
+            $prod_old = isset($locked_prod_qty[$pid]) ? (int) $locked_prod_qty[$pid] : ( $tx_started ? wc_suf_get_production_stock_qty_for_update( $product ) : wc_suf_get_production_stock_qty( $pid ) );
             $prod_new = max( 0, $prod_old - $req );
             $prod_update_result = wc_suf_set_production_stock_qty( $product, $prod_new );
             if ( is_wp_error( $prod_update_result ) ) {
