@@ -1174,52 +1174,6 @@ function wc_suf_capture_order_stock_snapshot( $order ) {
     return $snapshot;
 }
 
-function wc_suf_capture_order_item_reduced_snapshot( $order ) {
-    if ( ! is_a( $order, 'WC_Order' ) ) {
-        return [];
-    }
-
-    $snapshot = [];
-    $items = $order->get_items( 'line_item' );
-    foreach ( $items as $item ) {
-        if ( ! is_a( $item, 'WC_Order_Item_Product' ) ) {
-            continue;
-        }
-
-        $item_product = $item->get_product();
-        if ( ! $item_product ) {
-            continue;
-        }
-
-        $stock_product = wc_suf_get_stock_product( $item_product );
-        if ( ! $stock_product || ! $stock_product->managing_stock() ) {
-            continue;
-        }
-
-        $managed_product_id = (int) $stock_product->get_id();
-        if ( $managed_product_id <= 0 ) {
-            continue;
-        }
-
-        if ( ! isset( $snapshot[ $managed_product_id ] ) ) {
-            $snapshot[ $managed_product_id ] = [
-                'product_id'      => $managed_product_id,
-                'variation_id'    => $stock_product->is_type( 'variation' ) ? (int) $stock_product->get_id() : 0,
-                'product_name'    => wc_suf_full_product_label( $stock_product ),
-                'sku'             => (string) $stock_product->get_sku(),
-                'product_type'    => (string) $stock_product->get_type(),
-                'parent_id'       => (int) $stock_product->get_parent_id(),
-                'attributes_text' => wc_suf_get_product_attributes_text( $stock_product ),
-                'reduced_qty'     => 0.0,
-            ];
-        }
-
-        $snapshot[ $managed_product_id ]['reduced_qty'] += (float) wc_suf_get_order_item_reduced_stock_qty( $item );
-    }
-
-    return $snapshot;
-}
-
 function wc_suf_track_order_before_save_for_diff( $order_id, $items ) {
     if ( ! wc_suf_is_manual_admin_order_edit_request() ) {
         return;
@@ -1241,8 +1195,6 @@ function wc_suf_track_order_before_save_for_diff( $order_id, $items ) {
 
     // قبل از اعمال تغییرات آیتم‌های سفارش در ادمین، موجودی واقعی محصولات مدیریت‌شونده را ثبت می‌کنیم.
     $GLOBALS['wc_suf_order_edit_stock_snapshots'][ $order_id ] = wc_suf_capture_order_stock_snapshot( $order );
-    // برخی نسخه‌های ووکامرس در همین اکشن هنوز موجودی را جابه‌جا نمی‌کنند؛ برای اطمینان، اسنپ‌شات اقلام را هم نگه می‌داریم.
-    $GLOBALS['wc_suf_order_edit_item_snapshots'][ $order_id ] = wc_suf_capture_order_item_reduced_snapshot( $order );
 }
 add_action( 'woocommerce_before_save_order_items', 'wc_suf_track_order_before_save_for_diff', 5, 2 );
 
@@ -1267,18 +1219,14 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
     $order = wc_get_order( $order_id );
     if ( ! $order ) {
         unset( $GLOBALS['wc_suf_order_edit_stock_snapshots'][ $order_id ] );
-        unset( $GLOBALS['wc_suf_order_edit_item_snapshots'][ $order_id ] );
         return;
     }
 
     $before = (array) $GLOBALS['wc_suf_order_edit_stock_snapshots'][ $order_id ];
     unset( $GLOBALS['wc_suf_order_edit_stock_snapshots'][ $order_id ] );
     $after = wc_suf_capture_order_stock_snapshot( $order );
-    $before_items = isset( $GLOBALS['wc_suf_order_edit_item_snapshots'][ $order_id ] ) ? (array) $GLOBALS['wc_suf_order_edit_item_snapshots'][ $order_id ] : [];
-    unset( $GLOBALS['wc_suf_order_edit_item_snapshots'][ $order_id ] );
-    $after_items = wc_suf_capture_order_item_reduced_snapshot( $order );
 
-    $product_ids = array_unique( array_merge( array_keys( $before ), array_keys( $after ), array_keys( $before_items ), array_keys( $after_items ) ) );
+    $product_ids = array_unique( array_merge( array_keys( $before ), array_keys( $after ) ) );
     if ( empty( $product_ids ) ) {
         return;
     }
@@ -1310,19 +1258,6 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
         $old_qty = $old_row ? (float) $old_row['qty'] : 0.0;
         $new_qty = $new_row ? (float) $new_row['qty'] : 0.0;
         $delta   = $new_qty - $old_qty;
-
-        if ( abs( $delta ) < 0.0001 ) {
-            $old_item_row = isset( $before_items[ $product_id ] ) ? $before_items[ $product_id ] : null;
-            $new_item_row = isset( $after_items[ $product_id ] ) ? $after_items[ $product_id ] : null;
-            $old_reduced_qty = $old_item_row ? (float) $old_item_row['reduced_qty'] : 0.0;
-            $new_reduced_qty = $new_item_row ? (float) $new_item_row['reduced_qty'] : 0.0;
-            $delta = $old_reduced_qty - $new_reduced_qty;
-
-            if ( abs( $delta ) >= 0.0001 ) {
-                $new_qty = $old_qty + $delta;
-            }
-        }
-
         if ( abs( $delta ) < 0.0001 ) {
             continue;
         }
