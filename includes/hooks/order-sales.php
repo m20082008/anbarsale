@@ -374,18 +374,41 @@ function wc_suf_parse_admin_order_items_qty_totals( $order, $items ) {
     }
 
     $requested_qty_by_item_id = [];
-    foreach ( (array) $items as $item_id => $item_data ) {
-        $item_id = (int) $item_id;
-        if ( $item_id <= 0 || ! is_array( $item_data ) ) {
-            continue;
-        }
+    if ( is_string( $items ) ) {
+        parse_str( wp_unslash( $items ), $items );
+    }
+    $items = (array) $items;
 
-        if ( ! isset( $item_data['order_item_qty'] ) ) {
-            continue;
-        }
+    /**
+     * WooCommerce در اکشن woocommerce_before_save_order_items معمولاً
+     * payload را به‌صورت flat می‌فرستد:
+     * - order_item_qty[item_id] = qty
+     * اما برای سازگاری، ساختار nested هم پشتیبانی می‌شود.
+     */
+    if ( isset( $items['order_item_qty'] ) && is_array( $items['order_item_qty'] ) ) {
+        foreach ( $items['order_item_qty'] as $item_id => $qty_raw ) {
+            $item_id = (int) $item_id;
+            if ( $item_id <= 0 ) {
+                continue;
+            }
 
-        $qty = wc_stock_amount( wc_clean( wp_unslash( $item_data['order_item_qty'] ) ) );
-        $requested_qty_by_item_id[ $item_id ] = max( 0, (float) $qty );
+            $qty = wc_stock_amount( wc_clean( wp_unslash( $qty_raw ) ) );
+            $requested_qty_by_item_id[ $item_id ] = max( 0, (float) $qty );
+        }
+    } else {
+        foreach ( $items as $item_id => $item_data ) {
+            $item_id = (int) $item_id;
+            if ( $item_id <= 0 || ! is_array( $item_data ) ) {
+                continue;
+            }
+
+            if ( ! isset( $item_data['order_item_qty'] ) ) {
+                continue;
+            }
+
+            $qty = wc_stock_amount( wc_clean( wp_unslash( $item_data['order_item_qty'] ) ) );
+            $requested_qty_by_item_id[ $item_id ] = max( 0, (float) $qty );
+        }
     }
 
     $totals = [];
