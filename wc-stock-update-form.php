@@ -3075,6 +3075,7 @@ function wc_suf_save_stock_update_handler(){
     $has_teh_sale_role = wc_suf_current_user_has_role( 'tehsale' );
     $is_sale_user = $has_sale_role && ! $has_teh_sale_role && ! $has_formeditor;
     $is_teh_sale_user = $has_teh_sale_role && ! $has_sale_role && ! $has_formeditor;
+    $is_dual_sale_user = $has_sale_role && $has_teh_sale_role && ! $has_formeditor;
 
     if( ! $op_type ){
         wp_send_json_error(['message'=>'نوع عملیات مشخص نیست (ورود/خروج/انتقال/مرجوعی/فروش/فروش تهرانپارس/صرفاً چاپ لیبل).']);
@@ -3087,6 +3088,9 @@ function wc_suf_save_stock_update_handler(){
     }
     if ( $is_teh_sale_user && $op_type !== 'sale_teh' ) {
         wp_send_json_error(['message'=>'کاربر فروش تهرانپارس فقط مجاز به ثبت عملیات فروش تهرانپارس است.']);
+    }
+    if ( $is_dual_sale_user && ! in_array( $op_type, ['sale', 'sale_teh'], true ) ) {
+        wp_send_json_error(['message'=>'کاربر فروش/فروش تهرانپارس فقط مجاز به ثبت عملیات فروش است.']);
     }
 
     $out_destination = isset($_POST['out_destination']) ? sanitize_text_field( wp_unslash($_POST['out_destination']) ) : '';
