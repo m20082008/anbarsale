@@ -705,6 +705,96 @@ function wc_suf_render_detailed_logs_page(){
     echo wc_suf_render_detailed_logs_html(['public' => false]);
 }
 
+function wc_suf_render_pending_products_report_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        echo '<div class="wrap"><h1>گزارش کالاهای در انتظار</h1><p style="color:#b91c1c">دسترسی کافی ندارید.</p></div>';
+        return;
+    }
+
+    global $wpdb;
+    $pending_table = $wpdb->prefix . 'custom_sales_pending_items';
+
+    $rows = $wpdb->get_results(
+        "SELECT product_id, variation_id, SUM(pending_qty) AS total_pending_qty, COUNT(DISTINCT order_id) AS orders_count
+         FROM `$pending_table`
+         WHERE pending_qty > 0
+         GROUP BY product_id, variation_id
+         ORDER BY total_pending_qty DESC, product_id ASC"
+    );
+
+    $view_product_id = isset( $_GET['pending_product_id'] ) ? absint( wp_unslash( $_GET['pending_product_id'] ) ) : 0;
+    $view_variation_id = isset( $_GET['pending_variation_id'] ) ? absint( wp_unslash( $_GET['pending_variation_id'] ) ) : 0;
+
+    echo '<div class="wrap" dir="rtl">';
+    echo '<h1>گزارش کالاهای در انتظار</h1>';
+    echo '<p>این گزارش بر اساس جدول pending سفارشی تولید می‌شود و فقط آیتم‌های با مانده‌ی در انتظار را نمایش می‌دهد.</p>';
+
+    if ( $view_product_id > 0 || $view_variation_id > 0 ) {
+        $related_orders = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT order_id, SUM(pending_qty) AS pending_qty
+                 FROM `$pending_table`
+                 WHERE pending_qty > 0 AND product_id = %d AND variation_id = %d
+                 GROUP BY order_id
+                 ORDER BY order_id ASC",
+                $view_product_id,
+                $view_variation_id
+            )
+        );
+
+        echo '<h2 style="margin-top:24px">سفارش‌های مرتبط</h2>';
+        echo '<p><a href="' . esc_url( remove_query_arg( [ 'pending_product_id', 'pending_variation_id' ] ) ) . '">&larr; بازگشت به گزارش کلی</a></p>';
+        echo '<table class="widefat striped"><thead><tr><th>شماره سفارش</th><th>مقدار در انتظار</th><th>مشاهده سفارش</th></tr></thead><tbody>';
+        if ( empty( $related_orders ) ) {
+            echo '<tr><td colspan="3">سفارشی یافت نشد.</td></tr>';
+        } else {
+            foreach ( $related_orders as $related_order ) {
+                $oid = (int) ( $related_order->order_id ?? 0 );
+                $order = wc_get_order( $oid );
+                $order_number = $order ? $order->get_order_number() : $oid;
+                echo '<tr>';
+                echo '<td>#' . esc_html( $order_number ) . '</td>';
+                echo '<td>' . esc_html( (int) ( $related_order->pending_qty ?? 0 ) ) . '</td>';
+                echo '<td><a class="button" href="' . esc_url( admin_url( 'post.php?post=' . $oid . '&action=edit' ) ) . '" target="_blank" rel="noopener">مشاهده</a></td>';
+                echo '</tr>';
+            }
+        }
+        echo '</tbody></table>';
+    }
+
+    echo '<table class="widefat striped">';
+    echo '<thead><tr><th>نام کالا</th><th>جمع مقدار در انتظار</th><th>تعداد سفارش‌های دارای انتظار</th><th>مشاهده سفارش‌های مرتبط</th></tr></thead><tbody>';
+    if ( empty( $rows ) ) {
+        echo '<tr><td colspan="4">کالای در انتظاری یافت نشد.</td></tr>';
+    } else {
+        foreach ( $rows as $row ) {
+            $product_id = (int) ( $row->product_id ?? 0 );
+            $variation_id = (int) ( $row->variation_id ?? 0 );
+            $lookup_id = $variation_id > 0 ? $variation_id : $product_id;
+            $product = $lookup_id > 0 ? wc_get_product( $lookup_id ) : null;
+            $product_name = $product ? wc_suf_full_product_label( $product ) : ( 'محصول #' . $lookup_id );
+
+            $orders_url = add_query_arg(
+                [
+                    'page'                 => 'wc-suf-pending-products-report',
+                    'pending_product_id'   => $product_id,
+                    'pending_variation_id' => $variation_id,
+                ],
+                admin_url( 'admin.php' )
+            );
+
+            echo '<tr>';
+            echo '<td>' . esc_html( $product_name ) . '</td>';
+            echo '<td>' . esc_html( (int) ( $row->total_pending_qty ?? 0 ) ) . '</td>';
+            echo '<td>' . esc_html( (int) ( $row->orders_count ?? 0 ) ) . '</td>';
+            echo '<td><a class="button button-secondary" href="' . esc_url( $orders_url ) . '">مشاهده سفارش‌ها</a></td>';
+            echo '</tr>';
+        }
+    }
+    echo '</tbody></table>';
+    echo '</div>';
+}
+
 /*--------------------------------------
 | Admin: گزارش گروهی
 ---------------------------------------*/
@@ -718,6 +808,15 @@ add_action('admin_menu', function(){
         'wc_suf_render_detailed_logs_page',
         'dashicons-clipboard',
         56
+    );
+
+    add_submenu_page(
+        'wc-stock-audit-detailed',
+        'گزارش کالاهای در انتظار',
+        'گزارش کالاهای در انتظار',
+        'manage_options',
+        'wc-suf-pending-products-report',
+        'wc_suf_render_pending_products_report_page'
     );
 });
 function wc_suf_render_audit_page(){

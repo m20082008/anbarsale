@@ -16,6 +16,9 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     if ( 'yes' === $order->get_meta('_wc_suf_sale_logged', true) ) {
         return;
     }
+    if ( 'yes' === $order->get_meta('_is_custom_sales_order', true) ) {
+        return;
+    }
 
     $items = $order->get_items( 'line_item' );
     if ( empty($items) ) {
@@ -48,6 +51,10 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     $order_number = (string) $order->get_order_number();
     $created_at_mysql = current_time('mysql');
     $stock_source = wc_suf_get_order_stock_source( $order );
+    $custom_purpose = trim( (string) $order->get_meta( '_wc_suf_sale_log_purpose', true ) );
+    $sale_purpose = $custom_purpose !== ''
+        ? $custom_purpose
+        : ( 'سفارش ووکامرس | ' . (string) $stock_source['label'] );
 
     $logged_any_item = false;
     $receipt_rows = [];
@@ -121,7 +128,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
                 'csv_file_url' => null,
                 'word_file_url'=> null,
                 'op_type'      => 'sale',
-                'purpose'      => 'سفارش ووکامرس | ' . (string) $stock_source['label'],
+                'purpose'      => $sale_purpose,
                 'print_label'  => 0,
                 'product_id'   => $product_id,
                 'product_name' => $product_name,
@@ -153,7 +160,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     if ( $logged_any_item ) {
         $receipt_context = [
             'op_type'      => 'sale',
-            'purpose'      => 'سفارش ووکامرس | ' . (string) $stock_source['label'],
+            'purpose'      => $sale_purpose,
             'user_display' => $log_user_login,
             'user_code'    => $order_number,
             'created_at'   => $created_at_mysql,

@@ -105,6 +105,7 @@ function wc_suf_save_stock_update_handler(){
     global $wpdb;
     $table   = $wpdb->prefix.'stock_audit';
     $move_table = $wpdb->prefix.'stock_production_moves';
+    $pending_table = $wpdb->prefix . 'custom_sales_pending_items';
 
     $tx_started = false;
     if ( in_array( $op_type, ['in','out','transfer','return','onlyLabel','sale','sale_teh'], true ) ) {
@@ -114,7 +115,7 @@ function wc_suf_save_stock_update_handler(){
         }
     }
 
-    if ($op_type === 'out' || $op_type === 'transfer' || $op_type === 'sale' || $op_type === 'sale_teh') {
+    if ($op_type === 'out' || $op_type === 'transfer' || $op_type === 'sale_teh') {
         $insufficient = [];
         $locked_old_qty = [];
         $locked_prod_qty = [];
@@ -127,7 +128,7 @@ function wc_suf_save_stock_update_handler(){
             if( ! $product ) continue;
             if ( $op_type === 'out' ) {
                 $old = $tx_started ? wc_suf_get_production_stock_qty_for_update( $product ) : wc_suf_get_production_stock_qty( $pid );
-            } elseif ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
+            } elseif ( $op_type === 'sale_teh' ) {
                 $old = (int) ( wc_suf_get_stock_product( $product )->get_stock_quantity() ?? 0 );
                 if ( $tx_started ) {
                     $locked_prod_qty[$pid] = wc_suf_get_production_stock_qty_for_update_strict( $product );
@@ -167,7 +168,7 @@ function wc_suf_save_stock_update_handler(){
                 return sprintf('محصول %s (ID: %d): درخواست %d، موجودی فعلی %d', $r['name'], $r['id'], $r['req'], $r['have']);
             }, $insufficient);
 
-            $operation_label = ( $op_type === 'transfer' ) ? 'انتقال' : ( ( $op_type === 'sale' || $op_type === 'sale_teh' ) ? 'فروش' : 'خروج' );
+            $operation_label = ( $op_type === 'transfer' ) ? 'انتقال' : ( ( $op_type === 'sale_teh' ) ? 'فروش' : 'خروج' );
             $msg = "ثبت ناموفق؛ به‌دلیل کمبود موجودی موارد زیر امکان {$operation_label} ندارند:\n- " . implode("\n- ", $lines) . "\n\nلطفاً مقادیر را اصلاح کنید و دوباره تلاش کنید.";
             wp_send_json_error(['message' => $msg]);
         }
@@ -189,6 +190,9 @@ function wc_suf_save_stock_update_handler(){
     $processed_items = 0;
     $csv_rows = [];
     $sale_order = null;
+    $sale_allocated_qty_map = [];
+    $sale_pending_qty_map = [];
+    $sale_stock_log_rows = [];
 
     foreach($items as $it){
         $pid = isset($it['id'])  ? absint($it['id']) : 0;
@@ -330,8 +334,23 @@ function wc_suf_save_stock_update_handler(){
             $logged_added = $req;
         } elseif ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
             $old_qty = (int) ( $stock_product->get_stock_quantity() ?? 0 );
-            $new_qty = max( 0, (int) $old_qty - $req );
-            $logged_added = $req;
+            if ( 'sale' === $op_type ) {
+                $allocated_qty = min( $req, max( 0, (int) $old_qty ) );
+                $pending_qty = max( 0, $req - $allocated_qty );
+                $new_qty = max( 0, (int) $old_qty - $allocated_qty );
+                $logged_added = $allocated_qty;
+                $sale_allocated_qty_map[ $pid ] = $allocated_qty;
+                $sale_pending_qty_map[ $pid ] = $pending_qty;
+                $sale_stock_log_rows[ $pid ] = [
+                    'old_qty' => (float) $old_qty,
+                    'new_qty' => (float) $new_qty,
+                    'allocated_qty' => (int) $allocated_qty,
+                    'pending_qty' => (int) $pending_qty,
+                ];
+            } else {
+                $new_qty = max( 0, (int) $old_qty - $req );
+                $logged_added = $req;
+            }
 
         } elseif( $op_type === 'return' ){
             $logged_added = $req;
@@ -468,7 +487,13 @@ function wc_suf_save_stock_update_handler(){
                 if ( ! $pid || $req <= 0 ) continue;
                 $product = wc_get_product( $pid );
                 if ( ! $product ) continue;
-                $sale_order->add_product( $product, $req );
+                $line_qty = $req;
+                if ( 'sale' === $op_type ) {
+                    $line_qty = isset( $sale_allocated_qty_map[ $pid ] ) ? (int) $sale_allocated_qty_map[ $pid ] : 0;
+                }
+                if ( $line_qty > 0 ) {
+                    $sale_order->add_product( $product, $line_qty );
+                }
             }
 
             $sale_order->set_created_via( 'wc_suf_manual_sale' );
@@ -486,9 +511,117 @@ function wc_suf_save_stock_update_handler(){
             $sale_order->update_meta_data( '_wc_suf_sale_customer_name', $sale_customer_name );
             $sale_order->update_meta_data( '_wc_suf_sale_customer_mobile', $sale_customer_mobile );
             $sale_order->update_meta_data( '_wc_suf_sale_customer_address', $sale_customer_address );
+
+            if ( 'sale' === $op_type ) {
+                $sale_order->set_customer_id( $uid );
+                $sale_order->update_meta_data( '_is_custom_sales_order', 'yes' );
+                $sale_order->update_meta_data( '_wc_suf_sale_log_purpose', 'ایجاد سفارش فروش اولیه در وضعیت در انتظار پرداخت' );
+                $expiration_minutes = function_exists( 'wc_suf_get_custom_sale_expiration_minutes' ) ? wc_suf_get_custom_sale_expiration_minutes() : 60;
+                $sale_order->update_meta_data( '_expiration_timestamp', time() + ( absint( $expiration_minutes ) * MINUTE_IN_SECONDS ) );
+            }
+
             $sale_order->calculate_totals();
-            $sale_order->set_status( 'processing', 'ثبت سفارش از فرم عملیات فروش انبار تولید.' );
+            if ( 'sale' === $op_type ) {
+                $sale_order->set_status( 'pending', 'ایجاد سفارش فروش اولیه در وضعیت در انتظار پرداخت' );
+            } else {
+                $sale_order->set_status( 'processing', 'ثبت سفارش از فرم عملیات فروش انبار تولید.' );
+            }
             $sale_order->save();
+
+            if ( 'sale' === $op_type ) {
+                $sale_order_id = (int) $sale_order->get_id();
+                foreach ( $items as $it ) {
+                    $pid = isset($it['id']) ? absint($it['id']) : 0;
+                    if ( ! $pid ) {
+                        continue;
+                    }
+                    $product = wc_get_product( $pid );
+                    if ( ! $product ) {
+                        continue;
+                    }
+                    $allocated_qty = isset( $sale_allocated_qty_map[ $pid ] ) ? (int) $sale_allocated_qty_map[ $pid ] : 0;
+                    $pending_qty = isset( $sale_pending_qty_map[ $pid ] ) ? (int) $sale_pending_qty_map[ $pid ] : 0;
+                    $log_row = isset( $sale_stock_log_rows[ $pid ] ) ? (array) $sale_stock_log_rows[ $pid ] : [];
+                    $old_qty_log = isset( $log_row['old_qty'] ) ? (float) $log_row['old_qty'] : 0.0;
+                    $new_qty_log = isset( $log_row['new_qty'] ) ? (float) $log_row['new_qty'] : $old_qty_log;
+                    $base_product_id = $product->is_type('variation') ? (int) $product->get_parent_id() : $pid;
+                    $variation_id = $product->is_type('variation') ? $pid : null;
+
+                    if ( $pending_qty > 0 ) {
+                        $insert_pending = $wpdb->insert(
+                            $pending_table,
+                            [
+                                'order_id'      => $sale_order_id,
+                                'product_id'    => $base_product_id,
+                                'variation_id'  => $variation_id,
+                                'allocated_qty' => $allocated_qty,
+                                'pending_qty'   => $pending_qty,
+                                'user_id'       => $uid,
+                            ],
+                            [ '%d', '%d', '%d', '%d', '%d', '%d' ]
+                        );
+                        if ( false === $insert_pending ) {
+                            if ( $tx_started ) {
+                                $wpdb->query('ROLLBACK');
+                            }
+                            wp_send_json_error(['message'=>'ثبت آیتم‌های در انتظار فروش ناموفق بود.']);
+                        }
+                    }
+
+                    if ( $allocated_qty > 0 ) {
+                        $allocated_data = [
+                            'batch_code'   => (string) $sale_order->get_order_number(),
+                            'op_type'      => 'sale',
+                            'purpose'      => 'تخصیص موجودی واقعی به سفارش',
+                            'print_label'  => 0,
+                            'product_id'   => $pid,
+                            'product_name' => wc_suf_full_product_label( $product ),
+                            'old_qty'      => $old_qty_log,
+                            'added_qty'    => -1 * $allocated_qty,
+                            'new_qty'      => $new_qty_log,
+                            'user_id'      => $uid ?: null,
+                            'user_login'   => $ulog ?: null,
+                            'user_code'    => $user_code ?: null,
+                            'ip'           => $ip ?: null,
+                            'created_at'   => current_time('mysql'),
+                        ];
+                        $allocated_ok = $wpdb->insert( $table, $allocated_data, ['%s','%s','%s','%d','%d','%s','%f','%f','%f','%d','%s','%s','%s','%s'] );
+                        if ( false === $allocated_ok ) {
+                            if ( $tx_started ) {
+                                $wpdb->query('ROLLBACK');
+                            }
+                            wp_send_json_error(['message'=>'ثبت لاگ تخصیص موجودی ناموفق بود.']);
+                        }
+                    }
+
+                    if ( $pending_qty > 0 ) {
+                        $pending_data = [
+                            'batch_code'   => (string) $sale_order->get_order_number(),
+                            'op_type'      => 'sale',
+                            'purpose'      => 'ثبت آیتم در انتظار برای سفارش',
+                            'print_label'  => 0,
+                            'product_id'   => $pid,
+                            'product_name' => wc_suf_full_product_label( $product ),
+                            'old_qty'      => $new_qty_log,
+                            'added_qty'    => 0,
+                            'new_qty'      => $new_qty_log,
+                            'user_id'      => $uid ?: null,
+                            'user_login'   => $ulog ?: null,
+                            'user_code'    => $user_code ?: null,
+                            'ip'           => $ip ?: null,
+                            'created_at'   => current_time('mysql'),
+                        ];
+                        $pending_ok = $wpdb->insert( $table, $pending_data, ['%s','%s','%s','%d','%d','%s','%f','%f','%f','%d','%s','%s','%s','%s'] );
+                        if ( false === $pending_ok ) {
+                            if ( $tx_started ) {
+                                $wpdb->query('ROLLBACK');
+                            }
+                            wp_send_json_error(['message'=>'ثبت لاگ آیتم در انتظار ناموفق بود.']);
+                        }
+                    }
+                }
+            }
+
             wc_reduce_stock_levels( $sale_order->get_id() );
         } catch ( Exception $e ) {
             if ( $tx_started ) {

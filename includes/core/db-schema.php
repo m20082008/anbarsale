@@ -6,6 +6,40 @@ if ( ! defined('WC_SUF_TEHRANPARS_STORE_ID') ) {
     define('WC_SUF_TEHRANPARS_STORE_ID', 9343);
 }
 
+/**
+ * Create/update the pending sales allocation table.
+ *
+ * @return void
+ */
+function wc_suf_create_sales_pending_items_table() {
+    global $wpdb;
+
+    $table_name      = $wpdb->prefix . 'custom_sales_pending_items';
+    $charset_collate = $wpdb->get_charset_collate();
+
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+
+    $sql = "CREATE TABLE `$table_name` (
+      `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      `order_id` BIGINT UNSIGNED NOT NULL,
+      `product_id` BIGINT UNSIGNED NOT NULL,
+      `variation_id` BIGINT UNSIGNED NULL,
+      `allocated_qty` INT UNSIGNED NOT NULL DEFAULT 0,
+      `pending_qty` INT UNSIGNED NOT NULL DEFAULT 0,
+      `user_id` BIGINT UNSIGNED NOT NULL,
+      `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (`id`),
+      KEY `order_id` (`order_id`),
+      KEY `pending_qty` (`pending_qty`),
+      KEY `order_pending` (`order_id`, `pending_qty`),
+      KEY `product_id` (`product_id`),
+      KEY `user_id` (`user_id`)
+    ) $charset_collate;";
+
+    dbDelta( $sql );
+}
+
 /*--------------------------------------
 | DB: ساخت/آپدیت جدول لاگ + آماده‌سازی شمارنده‌ها
 ---------------------------------------*/
@@ -87,6 +121,7 @@ register_activation_hook(WC_SUF_PLUGIN_FILE, function(){
       KEY `created_at` (`created_at`)
     ) $charset;";
     dbDelta($sql_moves);
+    wc_suf_create_sales_pending_items_table();
     add_option('wc_suf_db_version', '2.6.0');
 
     if ( get_option('wc_suf_counter_in', null) === null )        add_option('wc_suf_counter_in',  '0', '', false);
@@ -159,6 +194,8 @@ function wc_suf_maybe_upgrade_schema(){
       KEY `created_at` (`created_at`)
     ) $charset;");
 
+    wc_suf_create_sales_pending_items_table();
+
     if ( ! $exists ) return;
 
     $needed = [
@@ -218,4 +255,3 @@ function wc_suf_maybe_upgrade_schema(){
     if ( get_option('wc_suf_counter_label', null) === null )   add_option('wc_suf_counter_label', '0', '', false);
     if ( get_option('wc_suf_counter_transfer', null) === null ) add_option('wc_suf_counter_transfer', '0', '', false);
 }
-

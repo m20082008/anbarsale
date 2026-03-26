@@ -334,6 +334,7 @@ add_shortcode('stock_update_form', function($atts){
 
         <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; opacity:.5" id="picker-open-block">
           <button type="button" id="btn-open-picker" style="padding:12px 18px; cursor:pointer; border:1px solid #10b981; border-radius:10px; background:#bbf7d0; color:#065f46; font-weight:700" disabled>➕ اضافه کردن محصولات</button>
+          <a href="<?php echo esc_url( admin_url( 'admin.php?page=wc-suf-seller-orders' ) ); ?>" class="button" style="padding:10px 14px; height:auto; line-height:1.5; border-radius:10px; font-weight:700">📋 مشاهده سفارش‌ها</a>
           <span class="suf-muted">ابتدا نوع عملیات را انتخاب کنید، سپس محصولات را در پنجره انتخاب کنید.</span>
         </div>
 
@@ -757,7 +758,7 @@ add_shortcode('stock_update_form', function($atts){
             if(it.qty > sourceStock){ it.qty = sourceStock; }
         }
         function enforceSaleLimit(idx){
-            if(opType !== 'sale' && opType !== 'sale_teh') return;
+            if(opType !== 'sale_teh') return;
             const it = items[idx];
             if(!it) return;
             const sourceStock = findMainStockById(it.id);
@@ -985,7 +986,7 @@ add_shortcode('stock_update_form', function($atts){
             return qty;
         }
         function capQtyForSale(pid, qty, showAlert){
-            if(opType !== 'sale' && opType !== 'sale_teh') return qty;
+            if(opType !== 'sale_teh') return qty;
             const stock = findMainStockById(pid);
             if (qty > stock){
                 if (showAlert){
@@ -1094,10 +1095,12 @@ add_shortcode('stock_update_form', function($atts){
                     }
                 }
                 if (opType === 'sale' || opType === 'sale_teh'){
-                    const sourceStock = findMainStockById(pid);
-                    if (qty > sourceStock){
-                        alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی انبار اصلی است.`);
-                        return;
+                    if (opType === 'sale_teh'){
+                        const sourceStock = findMainStockById(pid);
+                        if (qty > sourceStock){
+                            alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی انبار اصلی است.`);
+                            return;
+                        }
                     }
                 }
 
