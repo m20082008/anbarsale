@@ -38,6 +38,8 @@ function wc_suf_save_stock_update_handler(){
     $sale_customer_mobile = isset($_POST['sale_customer_mobile']) ? sanitize_text_field( wp_unslash($_POST['sale_customer_mobile']) ) : '';
     $sale_customer_mobile = wc_suf_normalize_digits( $sale_customer_mobile );
     $sale_customer_address = isset($_POST['sale_customer_address']) ? sanitize_textarea_field( wp_unslash($_POST['sale_customer_address']) ) : '';
+    $sale_submit_type_in = isset($_POST['sale_submit_type']) ? sanitize_text_field( wp_unslash($_POST['sale_submit_type']) ) : 'processing';
+    $sale_submit_type = in_array( $sale_submit_type_in, ['processing','on-hold'], true ) ? $sale_submit_type_in : 'processing';
     $transfer_store_id = null;
     if ( $op_type === 'out' ) {
         if ( ! in_array( $out_destination, ['main','teh'], true ) ) {
@@ -486,8 +488,15 @@ function wc_suf_save_stock_update_handler(){
             $sale_order->update_meta_data( '_wc_suf_sale_customer_name', $sale_customer_name );
             $sale_order->update_meta_data( '_wc_suf_sale_customer_mobile', $sale_customer_mobile );
             $sale_order->update_meta_data( '_wc_suf_sale_customer_address', $sale_customer_address );
+            if ( $op_type === 'sale' ) {
+                $sale_order->update_meta_data( '_wc_suf_sale_submit_type', $sale_submit_type );
+            }
             $sale_order->calculate_totals();
-            $sale_order->set_status( 'processing', 'ثبت سفارش از فرم عملیات فروش انبار تولید.' );
+            $target_status = 'processing';
+            if ( $op_type === 'sale' && $sale_submit_type === 'on-hold' ) {
+                $target_status = 'on-hold';
+            }
+            $sale_order->set_status( $target_status, 'ثبت سفارش از فرم عملیات فروش انبار تولید.' );
             $sale_order->save();
             wc_reduce_stock_levels( $sale_order->get_id() );
         } catch ( Exception $e ) {
