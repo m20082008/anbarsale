@@ -352,8 +352,9 @@ add_shortcode('stock_update_form', function($atts){
 
         <div id="items-total-wrap" style="display:none; font-weight:700; color:#1f2937">جمع کل تعداد: <span id="items-total-value">0</span></div>
 
-        <div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <button type="button" id="btn-save" style="margin-top:10px; display:none; padding:12px 18px; cursor:pointer; border:1px solid #2563eb; background:#2563eb; color:#fff; border-radius:10px" disabled>✅ ثبت نهایی</button>
+          <button type="button" id="btn-save-pending" style="margin-top:10px; display:none; padding:12px 18px; cursor:pointer; border:1px solid #f59e0b; background:#f59e0b; color:#fff; border-radius:10px" disabled>🕓 ثبت در انتظار</button>
         </div>
 
         <div id="save-result" style="display:none; margin-top:8px; padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; background:#f9fafb"></div>
@@ -423,6 +424,8 @@ add_shortcode('stock_update_form', function($atts){
         let saleCustomerName = '';
         let saleCustomerMobile = '';
         let saleCustomerAddress = '';
+        let saleOrderId = 0;
+        let saleHasPendingItems = false;
 
         const $overlay = $('#wc-suf-modal-overlay');
         const $modal   = $('#wc-suf-modal');
@@ -556,6 +559,7 @@ add_shortcode('stock_update_form', function($atts){
             if(opType === 'transfer' && (!transferSource || !transferDestination || transferSource === transferDestination)) return false;
             if(opType === 'return' && (!returnDestination || !returnReason)) return false;
             if((opType === 'sale' || opType === 'sale_teh') && !isSaleCustomerDataValid(false)) return false;
+            if(opType === 'sale' && (!saleOrderId || saleOrderId <= 0)) return false;
             if(isMarjooOnly && returnDestination !== 'teh') return false;
             return items.length > 0;
         }
@@ -678,7 +682,14 @@ add_shortcode('stock_update_form', function($atts){
                 return;
             }
             $('#items-table').show();
-            $('#btn-save').show().prop('disabled', !canSave());
+            const canNormalSave = canSave();
+            if(opType === 'sale'){
+                $('#btn-save').show().prop('disabled', !canNormalSave || saleHasPendingItems);
+                $('#btn-save-pending').show().prop('disabled', !canNormalSave);
+            } else {
+                $('#btn-save-pending').hide().prop('disabled', true);
+                $('#btn-save').show().prop('disabled', !canNormalSave);
+            }
             const grandTotal = items.reduce((sum, it) => sum + (parseInt(it.qty, 10) || 0), 0);
             $('#items-total-value').text(String(grandTotal));
             $('#items-total-wrap').show();
@@ -985,7 +996,8 @@ add_shortcode('stock_update_form', function($atts){
             return qty;
         }
         function capQtyForSale(pid, qty, showAlert){
-            if(opType !== 'sale' && opType !== 'sale_teh') return qty;
+            if(opType === 'sale') return qty;
+            if(opType !== 'sale_teh') return qty;
             const stock = findMainStockById(pid);
             if (qty > stock){
                 if (showAlert){
@@ -995,6 +1007,22 @@ add_shortcode('stock_update_form', function($atts){
                 return stock;
             }
             return qty;
+        }
+
+        function ensureSaleDraftOrder(){
+            if(opType !== 'sale') return $.Deferred().resolve().promise();
+            if(saleOrderId > 0) return $.Deferred().resolve().promise();
+            return $.post(ajaxurl, {
+                action: 'wc_suf_sale_create_draft_order',
+                sale_customer_name : String(saleCustomerName || ''),
+                sale_customer_mobile : String(saleCustomerMobile || ''),
+                sale_customer_address : String(saleCustomerAddress || ''),
+                _wpnonce : '<?php echo wp_create_nonce('wc_suf_sale_create_draft_order'); ?>'
+            }).done(function(res){
+                if(res && res.success && res.data && res.data.order_id){
+                    saleOrderId = parseInt(res.data.order_id, 10) || 0;
+                }
+            });
         }
 
         refreshPickerOpenButton();
@@ -1072,6 +1100,63 @@ add_shortcode('stock_update_form', function($atts){
 
         $('#wc-suf-picker-add').on('click', function(){
             if(!opType) return;
+            if(opType === 'sale'){
+                if(!isSaleCustomerDataValid(true)) return;
+                ensureSaleDraftOrder().done(function(){
+                    if(!saleOrderId){
+                        alert('ایجاد سفارش اولیه ناموفق بود.');
+                        return;
+                    }
+                    const payloadItems = [];
+                    for (const pid in pickerQty){
+                        let qty = +pickerQty[pid];
+                        if (!qty || qty <= 0) continue;
+                        payloadItems.push({id: parseInt(pid, 10), qty: Math.floor(qty)});
+                    }
+                    if(payloadItems.length === 0){
+                        alert('هیچ محصولی با تعداد بالاتر از صفر انتخاب نشده است.');
+                        return;
+                    }
+                    $.post(ajaxurl, {
+                        action: 'wc_suf_sale_add_items',
+                        order_id: saleOrderId,
+                        items: JSON.stringify(payloadItems),
+                        sale_customer_name : String(saleCustomerName || ''),
+                        sale_customer_mobile : String(saleCustomerMobile || ''),
+                        sale_customer_address : String(saleCustomerAddress || ''),
+                        _wpnonce : '<?php echo wp_create_nonce('wc_suf_sale_add_items'); ?>'
+                    }).done(function(res){
+                        if(!(res && res.success && res.data)){
+                            alert((res && res.data && res.data.message) ? res.data.message : 'افزودن محصولات ناموفق بود.');
+                            return;
+                        }
+                        saleHasPendingItems = !!res.data.has_pending_items;
+                        items.length = 0;
+                        const lines = Array.isArray(res.data.items) ? res.data.items : [];
+                        lines.forEach(function(line){
+                            items.push({
+                                id: String(line.id || ''),
+                                name: String(line.name || ''),
+                                qty: parseInt(line.qty, 10) || 0,
+                                stock: parseInt(line.stock, 10) || 0
+                            });
+                        });
+                        for (const pid in pickerQty){
+                            if (Object.prototype.hasOwnProperty.call(pickerQty, pid)) pickerQty[pid] = 0;
+                        }
+                        renderTable();
+                        closeModal();
+                        if(Array.isArray(res.data.adjusted_messages) && res.data.adjusted_messages.length){
+                            alert(res.data.adjusted_messages.join('\n'));
+                        }
+                    }).fail(function(){
+                        alert('خطای ارتباطی هنگام افزودن محصولات.');
+                    });
+                }).fail(function(){
+                    alert('خطای ارتباطی هنگام ایجاد سفارش اولیه.');
+                });
+                return;
+            }
 
             let addedAny = false;
 
@@ -1093,7 +1178,7 @@ add_shortcode('stock_update_form', function($atts){
                         return;
                     }
                 }
-                if (opType === 'sale' || opType === 'sale_teh'){
+                if (opType === 'sale_teh'){
                     const sourceStock = findMainStockById(pid);
                     if (qty > sourceStock){
                         alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی انبار اصلی است.`);
@@ -1317,17 +1402,18 @@ add_shortcode('stock_update_form', function($atts){
         });
 
         $('#items-table').on('click','.row-inc', function(){
-            const i = +$(this).data('i'); items[i].qty++; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
+            if(opType==='sale'){ alert('برای فروش، تغییر تعداد فقط از پاپ‌آپ انجام می‌شود.'); return; } const i = +$(this).data('i'); items[i].qty++; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
         });
         $('#items-table').on('click','.row-dec', function(){
-            const i = +$(this).data('i'); items[i].qty = Math.max(1, items[i].qty-1); enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
+            if(opType==='sale'){ alert('برای فروش، تغییر تعداد فقط از پاپ‌آپ انجام می‌شود.'); return; } const i = +$(this).data('i'); items[i].qty = Math.max(1, items[i].qty-1); enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
         });
         $('#items-table').on('change','.row-qty', function(){
             const i = +$(this).data('i'); let v = +$(this).val();
-            v = Math.max(1, v||1); items[i].qty = v; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
+            if(opType==='sale'){ alert('برای فروش، تغییر تعداد فقط از پاپ‌آپ انجام می‌شود.'); renderTable(); return; } v = Math.max(1, v||1); items[i].qty = v; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
         });
 
         $('#items-table').on('click','.btn-del',function(){
+            if(opType==='sale'){ alert('برای فروش، حذف آیتم از این جدول فعال نیست.'); return; }
             items.splice($(this).data('i'),1);
             renderTable();
         });
@@ -1353,6 +1439,29 @@ add_shortcode('stock_update_form', function($atts){
             const $btn = $(this);
             const originalText = $btn.text();
             $btn.prop('disabled', true).css({opacity: 0.6, cursor: 'not-allowed'}).text('در حال ثبت...');
+
+            if(opType === 'sale'){
+                const actionType = saleHasPendingItems ? 'pending' : 'final';
+                $.post(ajaxurl, {
+                    action: 'wc_suf_sale_settle_order',
+                    order_id: saleOrderId,
+                    submit_type: actionType,
+                    _wpnonce: '<?php echo wp_create_nonce('wc_suf_sale_settle_order'); ?>'
+                }).done(function(res){
+                    if(!(res && res.success)){
+                        alert((res && res.data && res.data.message) ? res.data.message : 'ثبت سفارش ناموفق بود.');
+                        return;
+                    }
+                    alert((res.data && res.data.message) ? res.data.message : 'سفارش ثبت شد.');
+                    location.reload();
+                }).fail(function(){
+                    alert('خطای ارتباطی هنگام ثبت سفارش.');
+                }).always(function(){
+                    submitting = false;
+                    $btn.prop('disabled', false).css({opacity: 1, cursor: 'pointer'}).text(originalText);
+                });
+                return;
+            }
 
             $.post(ajaxurl, {
                 action      : 'save_stock_update',
@@ -1445,6 +1554,34 @@ add_shortcode('stock_update_form', function($atts){
                 submitting = false; $btn.prop('disabled', false).css({opacity: 1, cursor: 'pointer'}).text(originalText);
             });
         });
+
+
+        $('#btn-save-pending').on('click', function(){
+            if(opType !== 'sale' || !saleOrderId || submitting) return;
+            submitting = true;
+            const $btn = $(this);
+            const originalText = $btn.text();
+            $btn.prop('disabled', true).css({opacity: 0.6, cursor: 'not-allowed'}).text('در حال ثبت...');
+            $.post(ajaxurl, {
+                action: 'wc_suf_sale_settle_order',
+                order_id: saleOrderId,
+                submit_type: 'pending',
+                _wpnonce: '<?php echo wp_create_nonce('wc_suf_sale_settle_order'); ?>'
+            }).done(function(res){
+                if(!(res && res.success)){
+                    alert((res && res.data && res.data.message) ? res.data.message : 'ثبت در انتظار ناموفق بود.');
+                    return;
+                }
+                alert((res.data && res.data.message) ? res.data.message : 'ثبت در انتظار انجام شد.');
+                location.reload();
+            }).fail(function(){
+                alert('خطای ارتباطی هنگام ثبت در انتظار.');
+            }).always(function(){
+                submitting = false;
+                $btn.prop('disabled', false).css({opacity: 1, cursor: 'pointer'}).text(originalText);
+            });
+        });
+
     });
     </script>
     <?php

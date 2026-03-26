@@ -656,3 +656,217 @@ function wc_suf_refresh_stocks_handler(){
 
     wp_send_json_success(['stocks' => $stocks]);
 }
+
+add_action('wp_ajax_wc_suf_sale_create_draft_order', 'wc_suf_sale_create_draft_order_handler');
+function wc_suf_sale_create_draft_order_handler(){
+    check_ajax_referer('wc_suf_sale_create_draft_order');
+
+    if( ! wc_suf_current_user_is_pos_manager() ){
+        wp_send_json_error(['message'=>'دسترسی غیرمجاز.']);
+    }
+
+    $sale_customer_name = isset($_POST['sale_customer_name']) ? sanitize_text_field( wp_unslash($_POST['sale_customer_name']) ) : '';
+    $sale_customer_mobile = isset($_POST['sale_customer_mobile']) ? sanitize_text_field( wp_unslash($_POST['sale_customer_mobile']) ) : '';
+    $sale_customer_address = isset($_POST['sale_customer_address']) ? sanitize_textarea_field( wp_unslash($_POST['sale_customer_address']) ) : '';
+    $sale_customer_mobile = preg_replace('/\D+/', '', wc_suf_normalize_digits( $sale_customer_mobile ) );
+
+    if ( mb_strlen( trim( $sale_customer_name ) ) < 3 ) {
+        wp_send_json_error(['message'=>'نام و نام خانوادگی مشتری معتبر نیست.']);
+    }
+    if ( ! preg_match('/^0\d{10}$/', $sale_customer_mobile) ) {
+        wp_send_json_error(['message'=>'شماره موبایل باید با 0 شروع شود و دقیقاً 11 رقم باشد.']);
+    }
+    if ( mb_strlen( trim( $sale_customer_address ) ) < 8 ) {
+        wp_send_json_error(['message'=>'آدرس مشتری معتبر نیست.']);
+    }
+
+    $user = wp_get_current_user();
+    $uid = (int) ($user->ID ?? 0);
+    $ulog = '';
+    if ( $uid ) {
+        $ulog = trim( (string) $user->first_name . ' ' . (string) $user->last_name );
+        if ( $ulog === '' ) {
+            $ulog = (string) ( $user->display_name ?: $user->user_login );
+        }
+    }
+
+    try {
+        $order = wc_create_order();
+        $order->set_created_via( 'wc_suf_manual_sale' );
+        $order->set_address([
+            'first_name' => $sale_customer_name,
+            'last_name'  => '.',
+            'phone'      => $sale_customer_mobile,
+            'address_1'  => $sale_customer_address,
+        ], 'billing');
+        $order->update_meta_data( 'فروشنده', $ulog ?: $user->user_login );
+        $order->update_meta_data( '_wc_suf_seller_name', $ulog ?: $user->user_login );
+        $order->update_meta_data( '_wc_suf_seller_id', $uid ?: 0 );
+        $order->update_meta_data( '_wc_suf_sale_channel', 'main' );
+        $order->update_meta_data( '_wc_suf_sale_operation', 'sale' );
+        $order->update_meta_data( '_wc_suf_sale_customer_name', $sale_customer_name );
+        $order->update_meta_data( '_wc_suf_sale_customer_mobile', $sale_customer_mobile );
+        $order->update_meta_data( '_wc_suf_sale_customer_address', $sale_customer_address );
+        $order->calculate_totals();
+        $order->set_status( 'pending', 'ایجاد اولیه سفارش فروش دستی.' );
+        $order->save();
+        $order->add_order_note('عملیات ایجاد سفارش اولیه فروش دستی ثبت شد.');
+        error_log('[WC SUF] عملیات ایجاد سفارش اولیه فروش دستی | order_id=' . $order->get_id());
+        wp_send_json_success([
+            'order_id' => (int) $order->get_id(),
+            'message' => 'سفارش اولیه با وضعیت در انتظار پرداخت ایجاد شد.',
+        ]);
+    } catch ( Exception $e ) {
+        wp_send_json_error(['message' => 'ایجاد سفارش اولیه ناموفق بود: ' . $e->getMessage()]);
+    }
+}
+
+function wc_suf_sale_get_order_lines_summary( $order ) {
+    $summary = [];
+    $has_pending = false;
+    foreach ( $order->get_items('line_item') as $item ) {
+        if ( ! is_a( $item, 'WC_Order_Item_Product' ) ) {
+            continue;
+        }
+        $qty = (int) $item->get_quantity();
+        if ( $qty <= 0 ) {
+            continue;
+        }
+        $product_id = (int) $item->get_variation_id();
+        if ( $product_id <= 0 ) {
+            $product_id = (int) $item->get_product_id();
+        }
+        if ( $product_id <= 0 ) {
+            continue;
+        }
+        $is_pending = ( '1' === (string) $item->get_meta('_wc_suf_pending_item', true) );
+        if ( $is_pending ) {
+            $has_pending = true;
+        }
+        $summary[] = [
+            'id' => $product_id,
+            'name' => (string) $item->get_name(),
+            'qty' => $qty,
+            'stock' => (int) max(0, (int) ( wc_get_product( $product_id ) ? (wc_get_product( $product_id )->get_stock_quantity() ?? 0) : 0 ) ),
+            'pending' => $is_pending ? 1 : 0,
+        ];
+    }
+
+    return [
+        'items' => $summary,
+        'has_pending' => $has_pending,
+    ];
+}
+
+add_action('wp_ajax_wc_suf_sale_add_items', 'wc_suf_sale_add_items_handler');
+function wc_suf_sale_add_items_handler(){
+    check_ajax_referer('wc_suf_sale_add_items');
+
+    if( ! wc_suf_current_user_is_pos_manager() ){
+        wp_send_json_error(['message'=>'دسترسی غیرمجاز.']);
+    }
+
+    $order_id = isset($_POST['order_id']) ? absint($_POST['order_id']) : 0;
+    $order = $order_id > 0 ? wc_get_order( $order_id ) : false;
+    if ( ! $order ) {
+        wp_send_json_error(['message'=>'سفارش اولیه یافت نشد.']);
+    }
+
+    $raw = isset($_POST['items']) ? wp_unslash($_POST['items']) : '[]';
+    $items = json_decode($raw, true);
+    if ( ! is_array($items) || empty($items) ) {
+        wp_send_json_error(['message'=>'داده‌ای ارسال نشده است.']);
+    }
+
+    $sale_customer_name = isset($_POST['sale_customer_name']) ? sanitize_text_field( wp_unslash($_POST['sale_customer_name']) ) : '';
+    $sale_customer_mobile = isset($_POST['sale_customer_mobile']) ? sanitize_text_field( wp_unslash($_POST['sale_customer_mobile']) ) : '';
+    $sale_customer_address = isset($_POST['sale_customer_address']) ? sanitize_textarea_field( wp_unslash($_POST['sale_customer_address']) ) : '';
+    $sale_customer_mobile = preg_replace('/\D+/', '', wc_suf_normalize_digits( $sale_customer_mobile ) );
+    $order->set_address([
+        'first_name' => $sale_customer_name,
+        'last_name'  => '.',
+        'phone'      => $sale_customer_mobile,
+        'address_1'  => $sale_customer_address,
+    ], 'billing');
+
+    $adjusted_messages = [];
+    foreach( $items as $it ){
+        $pid = isset($it['id']) ? absint($it['id']) : 0;
+        $req = isset($it['qty']) ? (int) $it['qty'] : 0;
+        if ( ! $pid || $req <= 0 ) continue;
+
+        $product = wc_get_product( $pid );
+        if ( ! $product ) continue;
+        $stock_product = wc_suf_get_stock_product( $product );
+        if ( ! $stock_product ) continue;
+
+        if( ! $stock_product->managing_stock() ){
+            $stock_product->set_manage_stock(true);
+            if( $stock_product->get_stock_quantity() === null ){
+                $stock_product->set_stock_quantity(0);
+            }
+            $stock_product->save();
+        }
+
+        $live_stock = (int) max( 0, (int) ($stock_product->get_stock_quantity() ?? 0) );
+        $allocated_qty = min( $req, $live_stock );
+        $pending_qty = max( 0, $req - $allocated_qty );
+
+        if ( $allocated_qty > 0 ) {
+            $order->add_product( $product, $allocated_qty );
+        }
+
+        if ( $pending_qty > 0 ) {
+            $pending_item = new WC_Order_Item_Product();
+            $pending_item->set_product( $product );
+            $pending_item->set_quantity( $pending_qty );
+            $pending_item->set_name( wc_suf_full_product_label( $product ) . ' (در انتظار ثبت)' );
+            $pending_item->add_meta_data( '_wc_suf_pending_item', '1', true );
+            $order->add_item( $pending_item );
+            $adjusted_messages[] = sprintf(
+                'برای محصول «%1$s» از %2$d عدد، %3$d تخصیص داده شد و %4$d عدد در انتظار ثبت قرار گرفت.',
+                wc_suf_full_product_label( $product ),
+                $req,
+                $allocated_qty,
+                $pending_qty
+            );
+        }
+    }
+
+    $order->calculate_totals();
+    $order->save();
+    wc_reduce_stock_levels( $order->get_id() );
+
+    $summary = wc_suf_sale_get_order_lines_summary( $order );
+    wp_send_json_success([
+        'items' => $summary['items'],
+        'has_pending_items' => $summary['has_pending'],
+        'adjusted_messages' => $adjusted_messages,
+    ]);
+}
+
+add_action('wp_ajax_wc_suf_sale_settle_order', 'wc_suf_sale_settle_order_handler');
+function wc_suf_sale_settle_order_handler(){
+    check_ajax_referer('wc_suf_sale_settle_order');
+
+    if( ! wc_suf_current_user_is_pos_manager() ){
+        wp_send_json_error(['message'=>'دسترسی غیرمجاز.']);
+    }
+
+    $order_id = isset($_POST['order_id']) ? absint($_POST['order_id']) : 0;
+    $submit_type = isset($_POST['submit_type']) ? sanitize_text_field( wp_unslash($_POST['submit_type']) ) : '';
+    $order = $order_id > 0 ? wc_get_order( $order_id ) : false;
+    if ( ! $order ) {
+        wp_send_json_error(['message'=>'سفارش یافت نشد.']);
+    }
+
+    if ( $submit_type === 'final' ) {
+        $order->set_status( 'processing', 'ثبت نهایی فروش دستی.' );
+        $order->save();
+        wp_send_json_success(['message'=>'سفارش با وضعیت در حال انجام ثبت نهایی شد.']);
+    }
+
+    $order->set_status( 'on-hold', 'ثبت سفارش دستی در انتظار بررسی.' );
+    $order->save();
+    wp_send_json_success(['message'=>'سفارش با وضعیت در حال بررسی ثبت شد.']);
+}
