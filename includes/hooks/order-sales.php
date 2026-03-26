@@ -672,7 +672,15 @@ function wc_suf_log_order_item_differences_after_save( $order_id, $items ) {
     $user_id = get_current_user_id();
     $user_display = '';
     if ( $current_user && $current_user->exists() ) {
-        $user_display = trim( (string) $current_user->user_login );
+        $first_name = trim( (string) $current_user->first_name );
+        $last_name  = trim( (string) $current_user->last_name );
+        $user_display = trim( $first_name . ' ' . $last_name );
+        if ( $user_display === '' ) {
+            $user_display = trim( (string) $current_user->display_name );
+        }
+        if ( $user_display === '' ) {
+            $user_display = trim( (string) $current_user->user_login );
+        }
     }
     if ( $user_display === '' ) {
         $user_display = 'system';
