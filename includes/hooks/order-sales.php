@@ -257,26 +257,18 @@ function wc_suf_restore_stock_for_cancelled_order( $order_id ) {
             $stock_product->save();
         }
 
+        /*
+         * در وضعیت لغو سفارش، ووکامرس خودش موجودی را برمی‌گرداند.
+         * اینجا فقط همان تغییر انجام‌شده توسط ووکامرس را لاگ می‌کنیم و
+         * هیچ افزایشی روی موجودی انجام نمی‌دهیم تا دوباره‌کاری نشود.
+         */
         if ( $destination === 'teh' ) {
-            $old_qty_raw = wc_suf_yith_get_store_stock_qty( $stock_product, (int) WC_SUF_TEHRANPARS_STORE_ID );
-            $old_qty = ( false === $old_qty_raw ) ? 0 : (float) $old_qty_raw;
-            $operation = ( $restore_qty >= 0 ) ? 'increase' : 'decrease';
-            $store_result = wc_suf_yith_change_store_stock( $stock_product, abs( $restore_qty ), (int) WC_SUF_TEHRANPARS_STORE_ID, $operation );
-            if ( is_wp_error( $store_result ) ) {
-                continue;
-            }
             $new_qty_raw = wc_suf_yith_get_store_stock_qty( $stock_product, (int) WC_SUF_TEHRANPARS_STORE_ID );
-            $new_qty = ( false === $new_qty_raw ) ? ( $old_qty + $restore_qty ) : (float) $new_qty_raw;
+            $new_qty = ( false === $new_qty_raw ) ? 0 : (float) $new_qty_raw;
         } else {
-            $old_qty = (float) ( $stock_product->get_stock_quantity() ?? 0 );
-            $operation = ( $restore_qty >= 0 ) ? 'increase' : 'decrease';
-            $result = wc_update_product_stock( $stock_product, abs( $restore_qty ), $operation );
-            if ( false === $result ) {
-                continue;
-            }
-            $stock_product->save();
             $new_qty = (float) ( $stock_product->get_stock_quantity() ?? 0 );
         }
+        $old_qty = $new_qty - $restore_qty;
 
         $product_name = (string) ( $row->product_name ?: $stock_product->get_name() );
         $purpose = sprintf(
