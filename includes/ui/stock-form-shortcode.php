@@ -266,6 +266,16 @@ add_shortcode('stock_update_form', function($atts){
           </div>
           <span class="suf-muted">(پس از انتخاب، قابل تغییر نیست مگر با رفرش)</span>
         </div>
+        <?php if ( in_array( 'sale', $allowed_ops, true ) ) : ?>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <button type="button" id="btn-my-sale-orders" style="padding:10px 14px; cursor:pointer; border:1px solid #0ea5e9; border-radius:10px; background:#e0f2fe; color:#0c4a6e; font-weight:700">📋 مشاهده سفارش ها</button>
+          <span class="suf-muted">فقط سفارش‌های در انتظار/در حال بررسی/در حال انجام شما نمایش داده می‌شود.</span>
+        </div>
+        <div id="sale-orders-panel" style="display:none; border:1px solid #e5e7eb; border-radius:12px; padding:12px; background:#fff">
+          <div style="font-weight:800; margin-bottom:8px">لیست سفارش‌های فروش من</div>
+          <div id="sale-orders-list"></div>
+        </div>
+        <?php endif; ?>
 
             
         <div id="out-destination-wrap" style="display:none; gap:8px; align-items:center; flex-wrap:wrap">
@@ -426,6 +436,7 @@ add_shortcode('stock_update_form', function($atts){
         let saleCustomerAddress = '';
         let saleOrderId = 0;
         let saleHasPendingItems = false;
+        let saleEditMode = false;
 
         const $overlay = $('#wc-suf-modal-overlay');
         const $modal   = $('#wc-suf-modal');
@@ -684,8 +695,13 @@ add_shortcode('stock_update_form', function($atts){
             $('#items-table').show();
             const canNormalSave = canSave();
             if(opType === 'sale'){
-                $('#btn-save').show().prop('disabled', !canNormalSave || saleHasPendingItems);
-                $('#btn-save-pending').show().prop('disabled', !canNormalSave);
+                if(saleEditMode){
+                    $('#btn-save').text('💾 ذخیره').show().prop('disabled', !canNormalSave);
+                    $('#btn-save-pending').hide().prop('disabled', true);
+                } else {
+                    $('#btn-save').text('✅ ثبت نهایی').show().prop('disabled', !canNormalSave || saleHasPendingItems);
+                    $('#btn-save-pending').show().prop('disabled', !canNormalSave);
+                }
             } else {
                 $('#btn-save-pending').hide().prop('disabled', true);
                 $('#btn-save').show().prop('disabled', !canNormalSave);
@@ -1219,6 +1235,7 @@ add_shortcode('stock_update_form', function($atts){
         $('input[name="op-type"]').on('change', function(){
             $('#save-result').hide().empty();
             if(opType) return;
+            saleEditMode = false;
             opType = $(this).val();
 
             if(allowedOps.indexOf(opType) === -1){
@@ -1402,10 +1419,10 @@ add_shortcode('stock_update_form', function($atts){
         });
 
         $('#items-table').on('click','.row-inc', function(){
-            if(opType==='sale'){ alert('برای فروش، تغییر تعداد فقط از پاپ‌آپ انجام می‌شود.'); return; } const i = +$(this).data('i'); items[i].qty++; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
+            if(opType==='sale' && !saleEditMode){ alert('برای فروش، تغییر تعداد فقط از پاپ‌آپ انجام می‌شود.'); return; } const i = +$(this).data('i'); items[i].qty++; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
         });
         $('#items-table').on('click','.row-dec', function(){
-            if(opType==='sale'){ alert('برای فروش، تغییر تعداد فقط از پاپ‌آپ انجام می‌شود.'); return; } const i = +$(this).data('i'); items[i].qty = Math.max(1, items[i].qty-1); enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
+            if(opType==='sale' && !saleEditMode){ alert('برای فروش، تغییر تعداد فقط از پاپ‌آپ انجام می‌شود.'); return; } const i = +$(this).data('i'); items[i].qty = Math.max(1, items[i].qty-1); enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
         });
         $('#items-table').on('change','.row-qty', function(){
             const i = +$(this).data('i'); let v = +$(this).val();
@@ -1413,7 +1430,7 @@ add_shortcode('stock_update_form', function($atts){
         });
 
         $('#items-table').on('click','.btn-del',function(){
-            if(opType==='sale'){ alert('برای فروش، حذف آیتم از این جدول فعال نیست.'); return; }
+            if(opType==='sale' && !saleEditMode){ alert('برای فروش، حذف آیتم از این جدول فعال نیست.'); return; }
             items.splice($(this).data('i'),1);
             renderTable();
         });
@@ -1441,6 +1458,36 @@ add_shortcode('stock_update_form', function($atts){
             $btn.prop('disabled', true).css({opacity: 0.6, cursor: 'not-allowed'}).text('در حال ثبت...');
 
             if(opType === 'sale'){
+                if(saleEditMode){
+                    $.post(ajaxurl, {
+                        action: 'wc_suf_sale_update_order',
+                        order_id: saleOrderId,
+                        items: JSON.stringify(items.map(function(it){ return {id: parseInt(it.id,10)||0, qty: parseInt(it.qty,10)||0}; })),
+                        sale_customer_name : String(saleCustomerName || ''),
+                        sale_customer_mobile : String(saleCustomerMobile || ''),
+                        sale_customer_address : String(saleCustomerAddress || ''),
+                        _wpnonce: '<?php echo wp_create_nonce('wc_suf_sale_update_order'); ?>'
+                    }).done(function(res){
+                        if(!(res && res.success && res.data)){
+                            alert((res && res.data && res.data.message) ? res.data.message : 'ذخیره سفارش ناموفق بود.');
+                            return;
+                        }
+                        saleHasPendingItems = !!res.data.has_pending_items;
+                        const lines = Array.isArray(res.data.items) ? res.data.items : [];
+                        items.length = 0;
+                        lines.forEach(function(line){
+                            items.push({id:String(line.id||''),name:String(line.name||''),qty:parseInt(line.qty,10)||0,stock:parseInt(line.stock,10)||0});
+                        });
+                        renderTable();
+                        alert((res.data && res.data.message) ? res.data.message : ('سفارش #' + (res.data.order_number || '') + ' ذخیره شد.'));
+                    }).fail(function(){
+                        alert('خطای ارتباطی هنگام ذخیره سفارش.');
+                    }).always(function(){
+                        submitting = false;
+                        $btn.prop('disabled', false).css({opacity: 1, cursor: 'pointer'}).text(originalText);
+                    });
+                    return;
+                }
                 const actionType = saleHasPendingItems ? 'pending' : 'final';
                 $.post(ajaxurl, {
                     action: 'wc_suf_sale_settle_order',
@@ -1496,6 +1543,9 @@ add_shortcode('stock_update_form', function($atts){
                             saleCustomerName = '';
                             saleCustomerMobile = '';
                             saleCustomerAddress = '';
+                            saleEditMode = false;
+                            saleOrderId = 0;
+                            saleHasPendingItems = false;
                             for (const pid in pickerQty){
                                 if (Object.prototype.hasOwnProperty.call(pickerQty, pid)) pickerQty[pid] = 0;
                             }
@@ -1579,6 +1629,119 @@ add_shortcode('stock_update_form', function($atts){
             }).always(function(){
                 submitting = false;
                 $btn.prop('disabled', false).css({opacity: 1, cursor: 'pointer'}).text(originalText);
+            });
+        });
+
+        function renderMyOrdersList(rows){
+            const $list = $('#sale-orders-list');
+            if(!Array.isArray(rows) || rows.length === 0){
+                $list.html('<div class="suf-muted">سفارشی برای نمایش وجود ندارد.</div>');
+                return;
+            }
+            const html = rows.map(function(r){
+                const statusMap = {pending:'در انتظار پرداخت', 'on-hold':'در حال بررسی', processing:'در حال انجام'};
+                const statusText = statusMap[String(r.status||'')] || String(r.status||'');
+                return `
+                <div style="display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; border:1px solid #e5e7eb; border-radius:10px; padding:8px; margin-bottom:8px;">
+                  <div>
+                    <div style="font-weight:700">#${escapeHtml(r.order_number || '')}</div>
+                    <div class="suf-muted">وضعیت: ${escapeHtml(statusText)} | تاریخ: ${escapeHtml(r.created_at || '')}</div>
+                  </div>
+                  <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                    <button type="button" class="sale-order-edit" data-order="${escapeHtml(r.order_id)}" style="padding:6px 10px; border:1px solid #0ea5e9; background:#e0f2fe; color:#0c4a6e; border-radius:8px; cursor:pointer;">ویرایش</button>
+                    <button type="button" class="sale-order-complete" data-order="${escapeHtml(r.order_id)}" style="padding:6px 10px; border:1px solid #16a34a; background:#dcfce7; color:#14532d; border-radius:8px; cursor:pointer;">تکمیل سفارش</button>
+                    <button type="button" class="sale-order-cancel" data-order="${escapeHtml(r.order_id)}" style="padding:6px 10px; border:1px solid #ef4444; background:#fee2e2; color:#991b1b; border-radius:8px; cursor:pointer;">لغو سفارش</button>
+                  </div>
+                </div>`;
+            }).join('');
+            $list.html(html);
+        }
+
+        $('#btn-my-sale-orders').on('click', function(){
+            $.post(ajaxurl, {
+                action: 'wc_suf_sale_list_my_orders',
+                _wpnonce: '<?php echo wp_create_nonce('wc_suf_sale_list_my_orders'); ?>'
+            }).done(function(res){
+                if(!(res && res.success && res.data)){
+                    alert((res && res.data && res.data.message) ? res.data.message : 'دریافت لیست سفارش‌ها ناموفق بود.');
+                    return;
+                }
+                renderMyOrdersList(res.data.orders || []);
+                $('#sale-orders-panel').show();
+            }).fail(function(){
+                alert('خطای ارتباطی هنگام دریافت لیست سفارش‌ها.');
+            });
+        });
+
+        $('#sale-orders-list').on('click', '.sale-order-edit', function(){
+            const orderId = parseInt($(this).data('order'), 10) || 0;
+            if(!orderId) return;
+            $.post(ajaxurl, {
+                action: 'wc_suf_sale_get_order',
+                order_id: orderId,
+                _wpnonce: '<?php echo wp_create_nonce('wc_suf_sale_get_order'); ?>'
+            }).done(function(res){
+                if(!(res && res.success && res.data)){
+                    alert((res && res.data && res.data.message) ? res.data.message : 'باز کردن سفارش ناموفق بود.');
+                    return;
+                }
+                const data = res.data;
+                saleEditMode = true;
+                opType = 'sale';
+                saleOrderId = parseInt(data.order_id, 10) || 0;
+                saleHasPendingItems = !!data.has_pending_items;
+                saleCustomerName = String(data.sale_customer_name || '');
+                saleCustomerMobile = String(data.sale_customer_mobile || '');
+                saleCustomerAddress = String(data.sale_customer_address || '');
+                $('#sale-customer-name').val(saleCustomerName);
+                $('#sale-customer-mobile').val(saleCustomerMobile);
+                $('#sale-customer-address').val(saleCustomerAddress);
+                $('input[name="op-type"][value="sale"]').prop('checked', true);
+                $('input[name="op-type"]').prop('disabled', true);
+                syncOpTypeButtonsState();
+                $('#out-destination-wrap,#transfer-controls-wrap,#return-controls-wrap').hide();
+                $('#sale-customer-wrap').css('display','flex');
+                items.length = 0;
+                const lines = Array.isArray(data.items) ? data.items : [];
+                lines.forEach(function(line){
+                    items.push({id:String(line.id||''),name:String(line.name||''),qty:parseInt(line.qty,10)||0,stock:parseInt(line.stock,10)||0});
+                });
+                refreshPickerOpenButton();
+                renderTable();
+                alert('سفارش #' + (data.order_number || '') + ' برای ویرایش بارگذاری شد.');
+            }).fail(function(){
+                alert('خطای ارتباطی هنگام باز کردن سفارش.');
+            });
+        });
+
+        $('#sale-orders-list').on('click', '.sale-order-cancel', function(){
+            const orderId = parseInt($(this).data('order'), 10) || 0;
+            if(!orderId) return;
+            if(!window.confirm('آیا از لغو این سفارش مطمئن هستید؟')) return;
+            $.post(ajaxurl, {
+                action: 'wc_suf_sale_cancel_order',
+                order_id: orderId,
+                _wpnonce: '<?php echo wp_create_nonce('wc_suf_sale_cancel_order'); ?>'
+            }).done(function(res){
+                alert((res && res.data && res.data.message) ? res.data.message : 'سفارش لغو شد.');
+                $('#btn-my-sale-orders').trigger('click');
+            }).fail(function(){
+                alert('خطای ارتباطی هنگام لغو سفارش.');
+            });
+        });
+
+        $('#sale-orders-list').on('click', '.sale-order-complete', function(){
+            const orderId = parseInt($(this).data('order'), 10) || 0;
+            if(!orderId) return;
+            $.post(ajaxurl, {
+                action: 'wc_suf_sale_complete_order',
+                order_id: orderId,
+                _wpnonce: '<?php echo wp_create_nonce('wc_suf_sale_complete_order'); ?>'
+            }).done(function(res){
+                alert((res && res.data && res.data.message) ? res.data.message : 'عملیات تکمیل سفارش انجام شد.');
+                $('#btn-my-sale-orders').trigger('click');
+            }).fail(function(){
+                alert('خطای ارتباطی هنگام تکمیل سفارش.');
             });
         });
 

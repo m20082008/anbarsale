@@ -15,6 +15,7 @@ register_activation_hook(WC_SUF_PLUGIN_FILE, function(){
     $move_table = $wpdb->prefix.'stock_production_moves';
     $prod_table = $wpdb->prefix.'stock_production_inventory';
     $move_table = $wpdb->prefix.'stock_production_moves';
+    $sale_pending_table = $wpdb->prefix.'wc_suf_sale_pending_items';
     $charset = $wpdb->get_charset_collate();
     require_once ABSPATH.'wp-admin/includes/upgrade.php';
 
@@ -87,6 +88,24 @@ register_activation_hook(WC_SUF_PLUGIN_FILE, function(){
       KEY `created_at` (`created_at`)
     ) $charset;";
     dbDelta($sql_moves);
+
+    $sql_sale_pending = "CREATE TABLE `$sale_pending_table` (
+      `id` BIGINT UNSIGNED AUTO_INCREMENT,
+      `order_id` BIGINT UNSIGNED NOT NULL,
+      `order_number` VARCHAR(64) NOT NULL,
+      `product_id` BIGINT UNSIGNED NOT NULL,
+      `product_name` TEXT NULL,
+      `pending_qty` DECIMAL(20,4) NOT NULL DEFAULT 0,
+      `seller_user_id` BIGINT UNSIGNED NOT NULL,
+      `created_at` DATETIME NOT NULL,
+      `updated_at` DATETIME NOT NULL,
+      PRIMARY KEY (`id`),
+      KEY `order_id` (`order_id`),
+      KEY `seller_user_id` (`seller_user_id`),
+      KEY `product_id` (`product_id`),
+      KEY `updated_at` (`updated_at`)
+    ) $charset;";
+    dbDelta($sql_sale_pending);
     add_option('wc_suf_db_version', '2.6.0');
 
     if ( get_option('wc_suf_counter_in', null) === null )        add_option('wc_suf_counter_in',  '0', '', false);
@@ -118,6 +137,7 @@ function wc_suf_maybe_upgrade_schema(){
 
     $prod_table = $wpdb->prefix.'stock_production_inventory';
     $move_table = $wpdb->prefix.'stock_production_moves';
+    $sale_pending_table = $wpdb->prefix.'wc_suf_sale_pending_items';
 
     dbDelta("CREATE TABLE `$prod_table` (
       `product_id` BIGINT UNSIGNED NOT NULL,
@@ -157,6 +177,23 @@ function wc_suf_maybe_upgrade_schema(){
       KEY `batch_code` (`batch_code`),
       KEY `operation` (`operation`),
       KEY `created_at` (`created_at`)
+    ) $charset;");
+
+    dbDelta("CREATE TABLE `$sale_pending_table` (
+      `id` BIGINT UNSIGNED AUTO_INCREMENT,
+      `order_id` BIGINT UNSIGNED NOT NULL,
+      `order_number` VARCHAR(64) NOT NULL,
+      `product_id` BIGINT UNSIGNED NOT NULL,
+      `product_name` TEXT NULL,
+      `pending_qty` DECIMAL(20,4) NOT NULL DEFAULT 0,
+      `seller_user_id` BIGINT UNSIGNED NOT NULL,
+      `created_at` DATETIME NOT NULL,
+      `updated_at` DATETIME NOT NULL,
+      PRIMARY KEY (`id`),
+      KEY `order_id` (`order_id`),
+      KEY `seller_user_id` (`seller_user_id`),
+      KEY `product_id` (`product_id`),
+      KEY `updated_at` (`updated_at`)
     ) $charset;");
 
     if ( ! $exists ) return;
@@ -218,4 +255,3 @@ function wc_suf_maybe_upgrade_schema(){
     if ( get_option('wc_suf_counter_label', null) === null )   add_option('wc_suf_counter_label', '0', '', false);
     if ( get_option('wc_suf_counter_transfer', null) === null ) add_option('wc_suf_counter_transfer', '0', '', false);
 }
-
