@@ -38,6 +38,55 @@ function wc_suf_current_user_can_manage_seller_order( $order ) {
 }
 
 /**
+ * Get base URL for seller orders screen.
+ *
+ * @return string
+ */
+function wc_suf_get_seller_orders_base_url() {
+    if ( is_admin() ) {
+        return admin_url( 'admin.php' );
+    }
+
+    $request_uri = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '';
+    $current_url = home_url( $request_uri );
+
+    return remove_query_arg(
+        [ 'wc_suf_front_seller_orders', 'page', 'action', 'order_id', 'updated', 'completion', 'remaining', 'fifo', 'done_count' ],
+        $current_url
+    );
+}
+
+/**
+ * Build seller orders URL for current context.
+ *
+ * @param array $args
+ * @return string
+ */
+function wc_suf_get_seller_orders_url( $args = [] ) {
+    if ( is_admin() ) {
+        $args = array_merge( [ 'page' => 'wc-suf-seller-orders' ], (array) $args );
+    } else {
+        $args = array_merge( [ 'wc_suf_front_seller_orders' => '1' ], (array) $args );
+    }
+
+    return add_query_arg( $args, wc_suf_get_seller_orders_base_url() );
+}
+
+/**
+ * Resolve redirect URL after admin-post handlers.
+ *
+ * @return string
+ */
+function wc_suf_get_seller_orders_redirect_base_url_from_post() {
+    $posted_url = isset( $_POST['wc_suf_return_url'] ) ? esc_url_raw( wp_unslash( $_POST['wc_suf_return_url'] ) ) : '';
+    if ( '' !== $posted_url ) {
+        return $posted_url;
+    }
+
+    return wc_suf_get_seller_orders_url();
+}
+
+/**
  * Handle seller order save/final submit.
  *
  * @return void
@@ -53,6 +102,7 @@ function wc_suf_handle_seller_order_update() {
     }
 
     check_admin_referer( 'wc_suf_seller_order_update_' . $order_id );
+    $redirect_base_url = wc_suf_get_seller_orders_redirect_base_url_from_post();
 
     $order = wc_get_order( $order_id );
     if ( ! wc_suf_current_user_can_manage_seller_order( $order ) ) {
@@ -63,10 +113,9 @@ function wc_suf_handle_seller_order_update() {
         wp_safe_redirect(
             add_query_arg(
                 [
-                    'page'    => 'wc-suf-seller-orders',
                     'updated' => '0',
                 ],
-                admin_url( 'admin.php' )
+                $redirect_base_url
             )
         );
         exit;
@@ -92,19 +141,30 @@ function wc_suf_handle_seller_order_update() {
     $order->save();
 
     $submit_type = isset( $_POST['submit_type'] ) ? sanitize_text_field( wp_unslash( $_POST['submit_type'] ) ) : 'save';
-    if ( 'final' === $submit_type ) {
+    if ( 'add_product' === $submit_type ) {
+        $new_product_id = isset( $_POST['new_product_id'] ) ? absint( wp_unslash( $_POST['new_product_id'] ) ) : 0;
+        $new_product_qty = isset( $_POST['new_product_qty'] ) ? absint( wp_unslash( $_POST['new_product_qty'] ) ) : 0;
+
+        if ( $new_product_id > 0 && $new_product_qty > 0 ) {
+            $new_product = wc_get_product( $new_product_id );
+            if ( $new_product ) {
+                $order->add_product( $new_product, $new_product_qty );
+                $order->calculate_totals( true );
+                $order->save();
+            }
+        }
+    } elseif ( 'final' === $submit_type ) {
         $order->update_status( 'processing', 'ثبت نهایی توسط فروشنده.' );
     }
 
     wp_safe_redirect(
         add_query_arg(
             [
-                'page'     => 'wc-suf-seller-orders',
                 'action'   => 'edit',
                 'order_id' => $order_id,
                 'updated'  => '1',
             ],
-            admin_url( 'admin.php' )
+            $redirect_base_url
         )
     );
     exit;
@@ -127,6 +187,7 @@ function wc_suf_handle_seller_complete_order() {
     }
 
     check_admin_referer( 'wc_suf_seller_complete_order_' . $order_id );
+    $redirect_base_url = wc_suf_get_seller_orders_redirect_base_url_from_post();
 
     $order = wc_get_order( $order_id );
     if ( ! wc_suf_current_user_can_manage_seller_order( $order ) ) {
@@ -136,10 +197,9 @@ function wc_suf_handle_seller_complete_order() {
         wp_safe_redirect(
             add_query_arg(
                 [
-                    'page'    => 'wc-suf-seller-orders',
                     'updated' => '0',
                 ],
-                admin_url( 'admin.php' )
+                $redirect_base_url
             )
         );
         exit;
@@ -274,7 +334,7 @@ function wc_suf_handle_seller_complete_order() {
         $args['remaining'] = rawurlencode( implode( ' | ', array_unique( $remaining_lines ) ) );
     }
 
-    wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+    wp_safe_redirect( add_query_arg( $args, $redirect_base_url ) );
     exit;
 }
 add_action( 'admin_post_wc_suf_seller_complete_order', 'wc_suf_handle_seller_complete_order' );
@@ -290,6 +350,7 @@ function wc_suf_handle_seller_complete_all_orders_fifo() {
     }
 
     check_admin_referer( 'wc_suf_seller_complete_all_orders_fifo' );
+    $redirect_base_url = wc_suf_get_seller_orders_redirect_base_url_from_post();
 
     $current_user_id = get_current_user_id();
     $user_obj = wp_get_current_user();
@@ -435,7 +496,6 @@ function wc_suf_handle_seller_complete_all_orders_fifo() {
     }
 
     $args = [
-        'page' => 'wc-suf-seller-orders',
         'fifo' => ( empty( $partial_lines ) ? 'done' : 'partial' ),
         'done_count' => $done_count,
     ];
@@ -443,7 +503,7 @@ function wc_suf_handle_seller_complete_all_orders_fifo() {
         $args['remaining'] = rawurlencode( implode( ' | ', array_slice( array_unique( $partial_lines ), 0, 20 ) ) );
     }
 
-    wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+    wp_safe_redirect( add_query_arg( $args, $redirect_base_url ) );
     exit;
 }
 add_action( 'admin_post_wc_suf_seller_complete_all_orders_fifo', 'wc_suf_handle_seller_complete_all_orders_fifo' );
@@ -467,6 +527,7 @@ function wc_suf_render_seller_orders_admin_page() {
     $remaining_msg = isset( $_GET['remaining'] ) ? sanitize_text_field( rawurldecode( wp_unslash( $_GET['remaining'] ) ) ) : '';
     $fifo = isset( $_GET['fifo'] ) ? sanitize_text_field( wp_unslash( $_GET['fifo'] ) ) : '';
     $done_count = isset( $_GET['done_count'] ) ? absint( wp_unslash( $_GET['done_count'] ) ) : 0;
+    $return_url = wc_suf_get_seller_orders_url();
 
     echo '<div class="wrap">';
     echo '<h1 class="wp-heading-inline">سفارش‌های فروش من</h1>';
@@ -505,6 +566,7 @@ function wc_suf_render_seller_orders_admin_page() {
         wp_nonce_field( 'wc_suf_seller_order_update_' . $order_id );
         echo '<input type="hidden" name="action" value="wc_suf_seller_save_order" />';
         echo '<input type="hidden" name="order_id" value="' . esc_attr( $order_id ) . '" />';
+        echo '<input type="hidden" name="wc_suf_return_url" value="' . esc_url( $return_url ) . '" />';
 
         echo '<table class="widefat striped" style="max-width:900px">';
         echo '<thead><tr><th>محصول</th><th style="width:140px">تعداد</th></tr></thead><tbody>';
@@ -524,19 +586,45 @@ function wc_suf_render_seller_orders_admin_page() {
         echo '</tbody></table>';
 
         if ( $order->has_status( [ 'pending', 'processing' ] ) ) {
+            $products_for_add = wc_get_products(
+                [
+                    'status' => 'publish',
+                    'limit'  => 150,
+                    'type'   => [ 'simple', 'variation' ],
+                    'return' => 'objects',
+                ]
+            );
+            echo '<div style="margin-top:14px; padding:10px; border:1px solid #d1fae5; background:#f0fdf4; border-radius:8px; max-width:900px">';
+            echo '<strong style="display:block; margin-bottom:8px">افزودن محصول جدید به سفارش</strong>';
+            echo '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">';
+            echo '<select name="new_product_id" style="min-width:320px; max-width:520px;">';
+            echo '<option value="">انتخاب محصول...</option>';
+            foreach ( (array) $products_for_add as $product_for_add ) {
+                if ( ! $product_for_add || ! is_a( $product_for_add, 'WC_Product' ) ) {
+                    continue;
+                }
+                echo '<option value="' . esc_attr( $product_for_add->get_id() ) . '">' . esc_html( wc_suf_full_product_label( $product_for_add ) ) . ' (#' . esc_html( $product_for_add->get_id() ) . ')</option>';
+            }
+            echo '</select>';
+            echo '<input type="number" name="new_product_qty" min="1" step="1" value="1" style="width:90px" />';
+            submit_button( '➕ اضافه کردن محصول', 'secondary', 'submit_type', false, [ 'value' => 'add_product', 'style' => 'background:#16a34a;border-color:#15803d;color:#fff;' ] );
+            echo '</div>';
+            echo '</div>';
+
             echo '<p style="margin-top:16px">';
             submit_button( 'ذخیره', 'secondary', 'submit_type', false, [ 'value' => 'save', 'style' => 'margin-left:8px;' ] );
             submit_button( 'ثبت نهایی', 'primary', 'submit_type', false, [ 'value' => 'final' ] );
             echo '</p>';
         }
 
-        echo '<p><a class="button" href="' . esc_url( add_query_arg( [ 'page' => 'wc-suf-seller-orders' ], admin_url( 'admin.php' ) ) ) . '">بازگشت به لیست سفارش‌ها</a></p>';
+        echo '<p><a class="button" href="' . esc_url( $return_url ) . '">بازگشت به لیست سفارش‌ها</a></p>';
         echo '</form>';
         if ( $order->has_status( 'pending' ) ) {
             echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="margin-top:8px;">';
             wp_nonce_field( 'wc_suf_seller_complete_order_' . $order_id );
             echo '<input type="hidden" name="action" value="wc_suf_seller_complete_order" />';
             echo '<input type="hidden" name="order_id" value="' . esc_attr( $order_id ) . '" />';
+            echo '<input type="hidden" name="wc_suf_return_url" value="' . esc_url( $return_url ) . '" />';
             echo '<button type="submit" class="button button-primary wc-suf-complete-order-btn">تکمیل سفارش</button>';
             echo '</form>';
         }
@@ -560,6 +648,7 @@ function wc_suf_render_seller_orders_admin_page() {
     echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="margin:12px 0 16px;">';
     wp_nonce_field( 'wc_suf_seller_complete_all_orders_fifo' );
     echo '<input type="hidden" name="action" value="wc_suf_seller_complete_all_orders_fifo" />';
+    echo '<input type="hidden" name="wc_suf_return_url" value="' . esc_url( $return_url ) . '" />';
     echo '<button type="submit" class="button wc-suf-complete-all-orders-btn" style="background:#dc2626;border-color:#dc2626;color:#fff">تکمیل کلی سفارش‌ها</button>';
     echo '</form>';
 
@@ -571,13 +660,11 @@ function wc_suf_render_seller_orders_admin_page() {
         foreach ( $orders as $order ) {
             $can_edit = $order->has_status( [ 'pending', 'processing' ] );
             $items_count = count( $order->get_items( 'line_item' ) );
-            $edit_url = add_query_arg(
+            $edit_url = wc_suf_get_seller_orders_url(
                 [
-                    'page'     => 'wc-suf-seller-orders',
                     'action'   => 'edit',
                     'order_id' => $order->get_id(),
-                ],
-                admin_url( 'admin.php' )
+                ]
             );
 
             echo '<tr>';
@@ -593,6 +680,7 @@ function wc_suf_render_seller_orders_admin_page() {
                     wp_nonce_field( 'wc_suf_seller_complete_order_' . $order->get_id() );
                     echo '<input type="hidden" name="action" value="wc_suf_seller_complete_order" />';
                     echo '<input type="hidden" name="order_id" value="' . esc_attr( $order->get_id() ) . '" />';
+                    echo '<input type="hidden" name="wc_suf_return_url" value="' . esc_url( $return_url ) . '" />';
                     echo '<button type="submit" class="button wc-suf-complete-order-btn">تکمیل سفارش</button>';
                     echo '</form>';
                 }

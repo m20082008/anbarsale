@@ -76,6 +76,11 @@ add_shortcode('stock_update_form', function($atts){
     if( ! wc_suf_current_user_is_pos_manager() ){
         return '<div dir="rtl" style="color:#b91c1c">این فرم فقط برای کاربران با نقش formeditor، marjoo، sale یا tehsale در دسترس است.</div>';
     }
+    if ( isset( $_GET['wc_suf_front_seller_orders'] ) && '1' === sanitize_text_field( wp_unslash( $_GET['wc_suf_front_seller_orders'] ) ) ) {
+        ob_start();
+        wc_suf_render_seller_orders_admin_page();
+        return ob_get_clean();
+    }
     $allowed_ops = wc_suf_get_allowed_ops_for_current_user();
     $is_marjoo_only = wc_suf_is_marjoo_only_user();
     $atts = shortcode_atts(['key' => ''], $atts, 'stock_update_form');
@@ -250,7 +255,7 @@ add_shortcode('stock_update_form', function($atts){
             <input type="radio" name="op-type" value="sale">
             <span>فروش</span>
           </label>
-          <a href="<?php echo esc_url( admin_url( 'admin.php?page=wc-suf-seller-orders' ) ); ?>" class="button" style="padding:10px 14px; height:auto; line-height:1.5; border-radius:10px; font-weight:700">📋 مشاهده سفارش‌ها</a>
+          <a href="<?php echo esc_url( wc_suf_get_seller_orders_url() ); ?>" class="button" style="padding:10px 14px; height:auto; line-height:1.5; border-radius:10px; font-weight:700">📋 مشاهده سفارش‌ها</a>
           <?php endif; ?>
           <?php if ( in_array( 'sale_teh', $allowed_ops, true ) ) : ?>
           <label class="wc-suf-optype-btn" data-op="sale_teh">
