@@ -594,20 +594,52 @@ function wc_suf_render_seller_orders_admin_page() {
                     'return' => 'objects',
                 ]
             );
-            echo '<div style="margin-top:14px; padding:10px; border:1px solid #d1fae5; background:#f0fdf4; border-radius:8px; max-width:900px">';
-            echo '<strong style="display:block; margin-bottom:8px">افزودن محصول جدید به سفارش</strong>';
-            echo '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">';
-            echo '<select name="new_product_id" style="min-width:320px; max-width:520px;">';
-            echo '<option value="">انتخاب محصول...</option>';
+            $products_picker_items = [];
             foreach ( (array) $products_for_add as $product_for_add ) {
                 if ( ! $product_for_add || ! is_a( $product_for_add, 'WC_Product' ) ) {
                     continue;
                 }
-                echo '<option value="' . esc_attr( $product_for_add->get_id() ) . '">' . esc_html( wc_suf_full_product_label( $product_for_add ) ) . ' (#' . esc_html( $product_for_add->get_id() ) . ')</option>';
+                $products_picker_items[] = [
+                    'id'    => (int) $product_for_add->get_id(),
+                    'label' => wc_suf_full_product_label( $product_for_add ),
+                ];
             }
-            echo '</select>';
-            echo '<input type="number" name="new_product_qty" min="1" step="1" value="1" style="width:90px" />';
-            submit_button( '➕ اضافه کردن محصول', 'secondary', 'submit_type', false, [ 'value' => 'add_product', 'style' => 'background:#16a34a;border-color:#15803d;color:#fff;' ] );
+            echo '<div style="margin-top:14px; padding:10px; border:1px solid #d1fae5; background:#f0fdf4; border-radius:8px; max-width:900px">';
+            echo '<strong style="display:block; margin-bottom:8px">افزودن محصول جدید به سفارش</strong>';
+            echo '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">';
+            echo '<input type="hidden" name="new_product_id" id="wc-suf-order-new-product-id" value="" />';
+            echo '<input type="hidden" name="new_product_qty" id="wc-suf-order-new-product-qty" value="1" />';
+            echo '<button type="button" class="button" id="wc-suf-order-open-picker" style="background:#16a34a;border-color:#15803d;color:#fff">➕ اضافه کردن محصولات</button>';
+            submit_button( '✅ ثبت محصول انتخاب‌شده', 'secondary', 'submit_type', false, [ 'value' => 'add_product', 'id' => 'wc-suf-order-submit-add-product', 'style' => 'display:none;background:#16a34a;border-color:#15803d;color:#fff;' ] );
+            echo '<span id="wc-suf-order-picked-product" style="font-weight:600;color:#065f46;"></span>';
+            echo '</div>';
+            echo '</div>';
+
+            echo '<div class="wc-suf-order-modal-overlay" id="wc-suf-order-modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:1000000; display:none;" aria-hidden="true"></div>';
+            echo '<div class="wc-suf-order-modal" id="wc-suf-order-modal" style="position:fixed; inset:0; z-index:1000001; display:none; align-items:center; justify-content:center; padding:18px;" aria-hidden="true" role="dialog" aria-modal="true">';
+            echo '<div style="width:min(980px,96vw); max-height:88vh; background:#fff; border-radius:14px; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,.25); display:flex; flex-direction:column;">';
+            echo '<div style="padding:12px 14px; border-bottom:1px solid #e5e7eb; display:flex; align-items:center; justify-content:space-between; gap:10px; background:#f9fafb;">';
+            echo '<div>';
+            echo '<div style="font-weight:800;">انتخاب محصولات (پاپ‌آپ فرم فروش)</div>';
+            echo '<div style="color:#6b7280; font-size:12px;">محصول را جستجو کنید، تعداد را مشخص کنید و روی «انتخاب محصول» بزنید.</div>';
+            echo '</div>';
+            echo '<button type="button" id="wc-suf-order-close-picker" style="border:1px solid #ef4444; background:#ef4444; color:#fff; border-radius:10px; padding:6px 10px; cursor:pointer; font-weight:900; line-height:1;">✕</button>';
+            echo '</div>';
+            echo '<div style="padding:12px 14px; overflow:auto;">';
+            echo '<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">';
+            echo '<label for="wc-suf-order-picker-q" style="min-width:70px; font-weight:700;">جستجو:</label>';
+            echo '<input id="wc-suf-order-picker-q" type="text" placeholder="نام محصول یا ID" style="flex:1; min-width:260px; padding:10px; border:1px solid #e5e7eb; border-radius:12px; font-size:16px;">';
+            echo '</div>';
+            echo '<div id="wc-suf-order-picker-results" style="border:1px solid #e5e7eb; border-radius:12px; overflow:hidden; max-height:380px; overflow-y:auto;"></div>';
+            echo '</div>';
+            echo '<div style="padding:12px 14px; border-top:1px solid #e5e7eb; display:flex; align-items:center; justify-content:space-between; gap:12px; background:#f9fafb; flex-wrap:wrap;">';
+            echo '<div id="wc-suf-order-picker-selected-info" style="color:#6b7280;">هیچ محصولی انتخاب نشده است.</div>';
+            echo '<div style="display:flex; gap:10px; align-items:center;">';
+            echo '<label for="wc-suf-order-picker-qty" style="font-weight:700;">تعداد:</label>';
+            echo '<input id="wc-suf-order-picker-qty" type="number" min="1" step="1" value="1" style="width:90px; padding:8px; border:1px solid #d1d5db; border-radius:8px;">';
+            echo '<button type="button" id="wc-suf-order-picker-add" style="padding:10px 16px; cursor:pointer; border:1px solid #10b981; border-radius:12px; background:#10b981; color:#fff; font-weight:800;">✅ انتخاب محصول</button>';
+            echo '</div>';
+            echo '</div>';
             echo '</div>';
             echo '</div>';
 
@@ -627,6 +659,36 @@ function wc_suf_render_seller_orders_admin_page() {
             echo '<input type="hidden" name="wc_suf_return_url" value="' . esc_url( $return_url ) . '" />';
             echo '<button type="submit" class="button button-primary wc-suf-complete-order-btn">تکمیل سفارش</button>';
             echo '</form>';
+        }
+        if ( $order->has_status( [ 'pending', 'processing' ] ) ) {
+            echo '<script>';
+            echo 'jQuery(function($){';
+            echo 'const pickerProducts = ' . wp_json_encode( $products_picker_items ) . ';';
+            echo 'const $overlay = $("#wc-suf-order-modal-overlay");';
+            echo 'const $modal = $("#wc-suf-order-modal");';
+            echo 'const $results = $("#wc-suf-order-picker-results");';
+            echo 'const $search = $("#wc-suf-order-picker-q");';
+            echo 'const $qty = $("#wc-suf-order-picker-qty");';
+            echo 'const $info = $("#wc-suf-order-picker-selected-info");';
+            echo 'const $pickedLabel = $("#wc-suf-order-picked-product");';
+            echo 'const $newProductId = $("#wc-suf-order-new-product-id");';
+            echo 'const $newProductQty = $("#wc-suf-order-new-product-qty");';
+            echo 'const $submitAdd = $("#wc-suf-order-submit-add-product");';
+            echo 'let selectedProduct = null;';
+            echo 'function esc(v){return String(v).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll(\'"\',"&quot;").replaceAll("\'","&#039;");}';
+            echo 'function normalize(v){return String(v||"").toLowerCase().trim().replace(/[۰-۹]/g,d=>"۰۱۲۳۴۵۶۷۸۹".indexOf(d)).replace(/[٠-٩]/g,d=>"٠١٢٣٤٥٦٧٨٩".indexOf(d));}';
+            echo 'function renderResults(){const q=normalize($search.val());let html="";const rows=pickerProducts.filter(function(p){if(!q){return true;}const hay=normalize(p.label+" "+p.id);return hay.includes(q);}).slice(0,120);if(!rows.length){$results.html("<div style=\"padding:12px; color:#6b7280;\">موردی پیدا نشد.</div>");return;}rows.forEach(function(p){const active=selectedProduct && String(selectedProduct.id)===String(p.id);html += "<button type=\"button\" class=\"wc-suf-order-picker-row\" data-id=\""+esc(p.id)+"\" style=\"display:block;width:100%;text-align:right;border:0;border-bottom:1px solid #f1f5f9;padding:10px 12px;background:"+(active?"#ecfdf5":"#fff")+";cursor:pointer;\"><strong>"+esc(p.label)+"</strong> <span style=\"color:#6b7280\">(#"+esc(p.id)+")</span></button>";});$results.html(html);}';
+            echo 'function openModal(){renderResults();$overlay.show();$modal.css("display","flex");$search.trigger("focus");}';
+            echo 'function closeModal(){$overlay.hide();$modal.hide();}';
+            echo '$("#wc-suf-order-open-picker").on("click", openModal);';
+            echo '$("#wc-suf-order-close-picker").on("click", closeModal);';
+            echo '$overlay.on("click", closeModal);';
+            echo '$search.on("input", renderResults);';
+            echo '$results.on("click",".wc-suf-order-picker-row",function(){const pid=$(this).data("id");selectedProduct=pickerProducts.find(p=>String(p.id)===String(pid))||null;renderResults();if(selectedProduct){$info.text("محصول انتخاب‌شده: "+selectedProduct.label+" (#"+selectedProduct.id+")");}});';
+            echo '$("#wc-suf-order-picker-add").on("click",function(){if(!selectedProduct){window.alert("ابتدا یک محصول انتخاب کنید.");return;}const qty=Math.max(1,parseInt($qty.val(),10)||1);$newProductId.val(selectedProduct.id);$newProductQty.val(qty);$pickedLabel.text("انتخاب شد: "+selectedProduct.label+" | تعداد: "+qty);$submitAdd.show();closeModal();});';
+            echo '$(document).on("keydown",function(e){if($modal.is(":visible") && e.key==="Escape"){closeModal();}});';
+            echo '});';
+            echo '</script>';
         }
         echo '<script>jQuery(function($){$(document).on("click",".wc-suf-complete-order-btn",function(e){if(!window.confirm("موجودی واقعی بررسی و آیتم‌های در انتظار تخصیص داده شوند؟")){e.preventDefault();}});});</script>';
         echo '</div>';
