@@ -31,6 +31,7 @@ $wc_suf_modules = [
     'includes/hooks/custom-sales-expiration.php',
     'includes/hooks/admin-order-stock-guard.php',
     'includes/ui/seller-orders-admin.php',
+    'includes/ui/seller-orders-frontend.php',
     'includes/ui/stock-form-shortcode.php',
     'includes/ajax/customer-lookup.php',
     'includes/ajax/save-stock-update.php',
