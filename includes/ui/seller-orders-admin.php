@@ -600,10 +600,13 @@ function wc_suf_render_seller_orders_admin_page() {
                     continue;
                 }
                 $products_picker_items[] = [
-                    'id'    => (int) $product_for_add->get_id(),
-                    'label' => wc_suf_full_product_label( $product_for_add ),
+                    'id'     => (int) $product_for_add->get_id(),
+                    'label'  => wc_suf_full_product_label( $product_for_add ),
+                    'search' => wc_suf_build_search_blob( $product_for_add ),
+                    'attrs'  => wc_suf_collect_product_attributes_for_picker( $product_for_add ),
                 ];
             }
+            $picker_attr_defs = wc_suf_get_picker_attribute_defs();
             echo '<div style="margin-top:14px; padding:10px; border:1px solid #d1fae5; background:#f0fdf4; border-radius:8px; max-width:900px">';
             echo '<strong style="display:block; margin-bottom:8px">افزودن محصول جدید به سفارش</strong>';
             echo '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">';
@@ -629,6 +632,13 @@ function wc_suf_render_seller_orders_admin_page() {
             echo '<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">';
             echo '<label for="wc-suf-order-picker-q" style="min-width:70px; font-weight:700;">جستجو:</label>';
             echo '<input id="wc-suf-order-picker-q" type="text" placeholder="نام محصول یا ID" style="flex:1; min-width:260px; padding:10px; border:1px solid #e5e7eb; border-radius:12px; font-size:16px;">';
+            echo '<button type="button" id="wc-suf-order-picker-clear" aria-label="پاک کردن جستجو" title="پاک کردن" style="width:44px; height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0; border:1px solid #2563eb; background:#2563eb; color:#fff; border-radius:12px; cursor:pointer; font-size:18px; font-weight:800">✕</button>';
+            echo '</div>';
+            echo '<div id="wc-suf-order-picker-filters" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px; margin-bottom:12px;"></div>';
+            echo '<div style="font-size:12px; color:#64748b; margin-bottom:8px;">جستجوی حرفه‌ای: می‌توانید همزمان با جستجوی متنی، روی ویژگی‌های محصول هم فیلتر کنید.</div>';
+            echo '<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; font-size:12px; color:#475569;">';
+            echo '<div><strong>تعداد نتایج:</strong> <span id="wc-suf-order-picker-count">0</span></div>';
+            echo '<div><strong>محدوده نمایش:</strong> حداکثر 120 محصول</div>';
             echo '</div>';
             echo '<div id="wc-suf-order-picker-results" style="border:1px solid #e5e7eb; border-radius:12px; overflow:hidden; max-height:380px; overflow-y:auto;"></div>';
             echo '</div>';
@@ -664,10 +674,14 @@ function wc_suf_render_seller_orders_admin_page() {
             echo '<script>';
             echo 'jQuery(function($){';
             echo 'const pickerProducts = ' . wp_json_encode( $products_picker_items ) . ';';
+            echo 'const pickerAttrDefs = ' . wp_json_encode( $picker_attr_defs ) . ';';
             echo 'const $overlay = $("#wc-suf-order-modal-overlay");';
             echo 'const $modal = $("#wc-suf-order-modal");';
             echo 'const $results = $("#wc-suf-order-picker-results");';
             echo 'const $search = $("#wc-suf-order-picker-q");';
+            echo 'const $clear = $("#wc-suf-order-picker-clear");';
+            echo 'const $count = $("#wc-suf-order-picker-count");';
+            echo 'const $filters = $("#wc-suf-order-picker-filters");';
             echo 'const $qty = $("#wc-suf-order-picker-qty");';
             echo 'const $info = $("#wc-suf-order-picker-selected-info");';
             echo 'const $pickedLabel = $("#wc-suf-order-picked-product");';
@@ -675,15 +689,20 @@ function wc_suf_render_seller_orders_admin_page() {
             echo 'const $newProductQty = $("#wc-suf-order-new-product-qty");';
             echo 'const $submitAdd = $("#wc-suf-order-submit-add-product");';
             echo 'let selectedProduct = null;';
+            echo 'const activeFilters = Object.create(null);';
             echo 'function esc(v){return String(v).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll(\'"\',"&quot;").replaceAll("\'","&#039;");}';
             echo 'function normalize(v){return String(v||"").toLowerCase().trim().replace(/[۰-۹]/g,d=>"۰۱۲۳۴۵۶۷۸۹".indexOf(d)).replace(/[٠-٩]/g,d=>"٠١٢٣٤٥٦٧٨٩".indexOf(d));}';
-            echo 'function renderResults(){const q=normalize($search.val());let html="";const rows=pickerProducts.filter(function(p){if(!q){return true;}const hay=normalize(p.label+" "+p.id);return hay.includes(q);}).slice(0,120);if(!rows.length){$results.html("<div style=\"padding:12px; color:#6b7280;\">موردی پیدا نشد.</div>");return;}rows.forEach(function(p){const active=selectedProduct && String(selectedProduct.id)===String(p.id);html += "<button type=\"button\" class=\"wc-suf-order-picker-row\" data-id=\""+esc(p.id)+"\" style=\"display:block;width:100%;text-align:right;border:0;border-bottom:1px solid #f1f5f9;padding:10px 12px;background:"+(active?"#ecfdf5":"#fff")+";cursor:pointer;\"><strong>"+esc(p.label)+"</strong> <span style=\"color:#6b7280\">(#"+esc(p.id)+")</span></button>";});$results.html(html);}';
-            echo 'function openModal(){renderResults();$overlay.show();$modal.css("display","flex");$search.trigger("focus");}';
+            echo 'function buildAttributeFilters(){if(!Array.isArray(pickerAttrDefs)||!pickerAttrDefs.length){$filters.empty();return;}const optionsByTax=Object.create(null);pickerProducts.forEach(function(p){const attrs=p&&p.attrs?p.attrs:null;if(!attrs||typeof attrs!=="object"){return;}pickerAttrDefs.forEach(function(def){if(!def||!def.tax){return;}const tax=String(def.tax);const vals=attrs[tax];if(!Array.isArray(vals)||!vals.length){return;}if(!optionsByTax[tax]){optionsByTax[tax]=Object.create(null);}vals.forEach(function(raw){const text=String(raw||"").trim();const key=normalize(text);if(!text||!key){return;}optionsByTax[tax][key]=text;});});});$filters.empty();pickerAttrDefs.forEach(function(def){if(!def||!def.tax){return;}const tax=String(def.tax);const label=String(def.label||tax);const bag=optionsByTax[tax];if(!bag){return;}const keys=Object.keys(bag).sort(function(a,b){return a.localeCompare(b,"fa");});if(!keys.length){return;}const id="wc-suf-order-filter-"+tax.replace(/[^a-z0-9_]/gi,"_");let html="<div><label for=\\""+esc(id)+"\\" style=\\"display:block;font-size:12px;font-weight:700;margin-bottom:6px;\\">"+esc(label)+"</label><select id=\\""+esc(id)+"\\" data-tax=\\""+esc(tax)+"\\" style=\\"width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:10px;\\"><option value=\\"\\">همه</option>";keys.forEach(function(k){html += "<option value=\\""+esc(k)+"\\">"+esc(bag[k])+"</option>";});html += "</select></div>";$filters.append(html);});};';
+            echo 'function productMatchesFilters(p){for(const tax in activeFilters){if(!Object.prototype.hasOwnProperty.call(activeFilters,tax)){continue;}const sel=String(activeFilters[tax]||"");if(!sel){continue;}const attrs=p&&p.attrs?p.attrs:null;if(!attrs||typeof attrs!=="object"){return false;}const vals=attrs[tax];if(!Array.isArray(vals)||!vals.length){return false;}let ok=false;for(let i=0;i<vals.length;i++){if(normalize(vals[i])===sel){ok=true;break;}}if(!ok){return false;}}return true;}';
+            echo 'function renderResults(){const q=normalize($search.val());const tokens=q.split(/\\s+/).map(function(t){return t.trim();}).filter(Boolean);let html="";const rows=pickerProducts.filter(function(p){const hay=normalize((p.search||p.label||"")+" "+p.id);const textOk=!tokens.length || tokens.every(function(t){return hay.includes(t);});return textOk && productMatchesFilters(p);}).slice(0,120);$count.text(rows.length);if(!rows.length){$results.html("<div style=\"padding:12px; color:#6b7280;\">موردی پیدا نشد.</div>");return;}rows.forEach(function(p){const active=selectedProduct && String(selectedProduct.id)===String(p.id);html += "<button type=\"button\" class=\"wc-suf-order-picker-row\" data-id=\""+esc(p.id)+"\" style=\"display:block;width:100%;text-align:right;border:0;border-bottom:1px solid #f1f5f9;padding:10px 12px;background:"+(active?"#ecfdf5":"#fff")+";cursor:pointer;\"><strong>"+esc(p.label)+"</strong> <span style=\"color:#6b7280\">(#"+esc(p.id)+")</span></button>";});$results.html(html);}';
+            echo 'function openModal(){buildAttributeFilters();renderResults();$overlay.show();$modal.css("display","flex");$search.trigger("focus");}';
             echo 'function closeModal(){$overlay.hide();$modal.hide();}';
             echo '$("#wc-suf-order-open-picker").on("click", openModal);';
             echo '$("#wc-suf-order-close-picker").on("click", closeModal);';
             echo '$overlay.on("click", closeModal);';
             echo '$search.on("input", renderResults);';
+            echo '$clear.on("click",function(){$search.val("");$filters.find("select[data-tax]").val("");for(const k in activeFilters){if(Object.prototype.hasOwnProperty.call(activeFilters,k)){activeFilters[k]="";}}renderResults();$search.trigger("focus");});';
+            echo '$filters.on("change","select[data-tax]",function(){const tax=String($(this).data("tax")||"");if(!tax){return;}activeFilters[tax]=String($(this).val()||"");renderResults();});';
             echo '$results.on("click",".wc-suf-order-picker-row",function(){const pid=$(this).data("id");selectedProduct=pickerProducts.find(p=>String(p.id)===String(pid))||null;renderResults();if(selectedProduct){$info.text("محصول انتخاب‌شده: "+selectedProduct.label+" (#"+selectedProduct.id+")");}});';
             echo '$("#wc-suf-order-picker-add").on("click",function(){if(!selectedProduct){window.alert("ابتدا یک محصول انتخاب کنید.");return;}const qty=Math.max(1,parseInt($qty.val(),10)||1);$newProductId.val(selectedProduct.id);$newProductQty.val(qty);$pickedLabel.text("انتخاب شد: "+selectedProduct.label+" | تعداد: "+qty);$submitAdd.show();closeModal();});';
             echo '$(document).on("keydown",function(e){if($modal.is(":visible") && e.key==="Escape"){closeModal();}});';
