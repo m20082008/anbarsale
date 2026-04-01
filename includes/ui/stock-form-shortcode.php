@@ -414,6 +414,10 @@ add_shortcode('stock_update_form', function($atts){
         const userCode = urlKey || defaultShortcodeKey;
 
         const items = [];
+        const allProductIds = allProducts
+            .map(function(p){ return parseInt(p && p.id, 10); })
+            .filter(function(v){ return Number.isFinite(v) && v > 0; });
+        let pickerOpenCount = 0;
         let opType = null;
         let outDestination = null;
         let transferSource = null;
@@ -1063,7 +1067,26 @@ add_shortcode('stock_update_form', function($atts){
 
         $('#btn-open-picker').on('click', function(){
             if(!canOpenPicker()) return;
-            openModal();
+            const shouldRefreshStocks = ((opType === 'sale' || opType === 'sale_teh') && pickerOpenCount >= 1);
+            if(!shouldRefreshStocks){
+                pickerOpenCount++;
+                openModal();
+                return;
+            }
+
+            const $openBtn = $(this);
+            const originalText = $openBtn.text();
+            $openBtn.prop('disabled', true).css({opacity: 0.7, cursor: 'wait'}).text('در حال به‌روزرسانی موجودی...');
+
+            refreshStocksBeforeResult(allProductIds).done(function(refreshRes){
+                if(refreshRes && refreshRes.success && refreshRes.data && refreshRes.data.stocks){
+                    updateProductStocksInMemory(refreshRes.data.stocks);
+                }
+            }).always(function(){
+                $openBtn.prop('disabled', false).css({opacity: 1, cursor: 'pointer'}).text(originalText);
+                pickerOpenCount++;
+                openModal();
+            });
         });
 
         $('#wc-suf-modal-close').on('click', closeModal);
@@ -1450,6 +1473,7 @@ add_shortcode('stock_update_form', function($atts){
 
                         const finishSaveUi = function(refreshFailed){
                             items.length = 0;
+                            pickerOpenCount = 0;
                             opType = null;
                             outDestination = null;
                             transferSource = null;
