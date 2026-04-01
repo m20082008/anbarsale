@@ -423,6 +423,7 @@ add_shortcode('stock_update_form', function($atts){
         let saleCustomerName = '';
         let saleCustomerMobile = '';
         let saleCustomerAddress = '';
+        let saleHoldOrderId = 0;
 
         const $overlay = $('#wc-suf-modal-overlay');
         const $modal   = $('#wc-suf-modal');
@@ -518,6 +519,44 @@ add_shortcode('stock_update_form', function($atts){
                 action   : 'wc_suf_refresh_stocks',
                 ids      : JSON.stringify(normalizedIds),
                 _wpnonce : '<?php echo wp_create_nonce('wc_suf_refresh_stocks'); ?>'
+            });
+        }
+        function syncSaleHoldOrder(showErrors){
+            if(!(opType === 'sale' || opType === 'sale_teh')) return $.Deferred().resolve({success:true}).promise();
+            if(!Array.isArray(items) || items.length === 0){
+                if(saleHoldOrderId){
+                    return $.post(ajaxurl, {
+                        action   : 'wc_suf_sync_sale_hold_order',
+                        order_id : saleHoldOrderId,
+                        op_type  : opType,
+                        items    : JSON.stringify([]),
+                        sale_customer_name : String(saleCustomerName || ''),
+                        sale_customer_mobile : String(saleCustomerMobile || ''),
+                        sale_customer_address : String(saleCustomerAddress || ''),
+                        _wpnonce : '<?php echo wp_create_nonce('wc_suf_sync_sale_hold_order'); ?>'
+                    });
+                }
+                return $.Deferred().resolve({success:true}).promise();
+            }
+            return $.post(ajaxurl, {
+                action   : 'wc_suf_sync_sale_hold_order',
+                order_id : saleHoldOrderId,
+                op_type  : opType,
+                items    : JSON.stringify(items),
+                sale_customer_name : String(saleCustomerName || ''),
+                sale_customer_mobile : String(saleCustomerMobile || ''),
+                sale_customer_address : String(saleCustomerAddress || ''),
+                _wpnonce : '<?php echo wp_create_nonce('wc_suf_sync_sale_hold_order'); ?>'
+            }).done(function(res){
+                if(res && res.success && res.data && res.data.order_id){
+                    saleHoldOrderId = parseInt(res.data.order_id, 10) || 0;
+                } else if (showErrors) {
+                    alert((res && res.data && res.data.message) ? res.data.message : 'خطا در همگام‌سازی سفارش هولد.');
+                }
+            }).fail(function(){
+                if(showErrors){
+                    alert('خطای ارتباطی هنگام همگام‌سازی سفارش هولد.');
+                }
             });
         }
         function getPickerMetaLine(p){
@@ -1150,6 +1189,7 @@ add_shortcode('stock_update_form', function($atts){
             }
 
             renderTable();
+            syncSaleHoldOrder(true);
             closeModal();
         });
 
@@ -1298,6 +1338,7 @@ add_shortcode('stock_update_form', function($atts){
             saleCustomerName = $(this).val() || '';
             refreshPickerOpenButton();
             $('#btn-save').prop('disabled', !canSave());
+            syncSaleHoldOrder(false);
         });
         let saleCustomerLookupTimer = null;
         let lastLookupMobile = '';
@@ -1333,27 +1374,33 @@ add_shortcode('stock_update_form', function($atts){
             }
             refreshPickerOpenButton();
             $('#btn-save').prop('disabled', !canSave());
+            syncSaleHoldOrder(false);
         });
         $('#sale-customer-address').on('input', function(){
             saleCustomerAddress = $(this).val() || '';
             refreshPickerOpenButton();
             $('#btn-save').prop('disabled', !canSave());
+            syncSaleHoldOrder(false);
         });
 
         $('#items-table').on('click','.row-inc', function(){
             const i = +$(this).data('i'); items[i].qty++; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
+            syncSaleHoldOrder(true);
         });
         $('#items-table').on('click','.row-dec', function(){
             const i = +$(this).data('i'); items[i].qty = Math.max(1, items[i].qty-1); enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
+            syncSaleHoldOrder(true);
         });
         $('#items-table').on('change','.row-qty', function(){
             const i = +$(this).data('i'); let v = +$(this).val();
             v = Math.max(1, v||1); items[i].qty = v; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
+            syncSaleHoldOrder(true);
         });
 
         $('#items-table').on('click','.btn-del',function(){
             items.splice($(this).data('i'),1);
             renderTable();
+            syncSaleHoldOrder(true);
         });
 
         let submitting = false;
@@ -1390,6 +1437,7 @@ add_shortcode('stock_update_form', function($atts){
                 sale_customer_name : String(saleCustomerName || ''),
                 sale_customer_mobile : String(saleCustomerMobile || ''),
                 sale_customer_address : String(saleCustomerAddress || ''),
+                sale_hold_order_id : saleHoldOrderId,
                 op_type     : opType,
                 _wpnonce    : '<?php echo wp_create_nonce('save_stock_update'); ?>'
             }).done(function(res){
@@ -1411,6 +1459,7 @@ add_shortcode('stock_update_form', function($atts){
                             saleCustomerName = '';
                             saleCustomerMobile = '';
                             saleCustomerAddress = '';
+                            saleHoldOrderId = 0;
                             for (const pid in pickerQty){
                                 if (Object.prototype.hasOwnProperty.call(pickerQty, pid)) pickerQty[pid] = 0;
                             }

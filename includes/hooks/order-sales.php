@@ -1,4 +1,95 @@
 <?php
+function wc_suf_get_sale_hold_minutes() {
+    $minutes = (int) get_option( 'wc_suf_sale_hold_minutes', 30 );
+    return max( 1, $minutes );
+}
+
+function wc_suf_schedule_sale_hold_expiry( $order_id ) {
+    $order_id = (int) $order_id;
+    if ( $order_id <= 0 ) return;
+    $hook = 'wc_suf_sale_hold_expire_event';
+    wp_clear_scheduled_hook( $hook, [ $order_id ] );
+    wp_schedule_single_event( time() + ( wc_suf_get_sale_hold_minutes() * MINUTE_IN_SECONDS ), $hook, [ $order_id ] );
+}
+
+function wc_suf_clear_sale_hold_expiry( $order_id ) {
+    $order_id = (int) $order_id;
+    if ( $order_id <= 0 ) return;
+    wp_clear_scheduled_hook( 'wc_suf_sale_hold_expire_event', [ $order_id ] );
+}
+
+function wc_suf_expire_sale_hold_order( $order_id ) {
+    $order = wc_get_order( $order_id );
+    if ( ! $order ) return;
+    if ( $order->get_created_via() !== 'wc_suf_manual_sale_hold' ) return;
+    if ( ! $order->has_status( 'pending' ) ) return;
+    $order->set_status( 'instaformremove', 'انقضای زمان هولد فرم فروش اینستا.' );
+    $order->save();
+}
+add_action( 'wc_suf_sale_hold_expire_event', 'wc_suf_expire_sale_hold_order', 10, 1 );
+
+add_action( 'init', function() {
+    register_post_status( 'wc-instaformremove', [
+        'label'                     => 'حذف سفارش اینستا',
+        'public'                    => true,
+        'exclude_from_search'       => false,
+        'show_in_admin_all_list'    => true,
+        'show_in_admin_status_list' => true,
+        'label_count'               => _n_noop( 'حذف سفارش اینستا <span class="count">(%s)</span>', 'حذف سفارش اینستا <span class="count">(%s)</span>' ),
+    ] );
+} );
+add_filter( 'wc_order_statuses', function( $statuses ) {
+    $statuses['wc-instaformremove'] = 'حذف سفارش اینستا';
+    return $statuses;
+} );
+
+add_action( 'woocommerce_order_status_instaformremove', function( $order_id ) {
+    $order = wc_get_order( $order_id );
+    if ( ! $order ) return;
+    if ( 'yes' === $order->get_meta( '_wc_suf_hold_stock_released', true ) ) return;
+    foreach ( $order->get_items( 'line_item' ) as $item ) {
+        if ( ! is_a( $item, 'WC_Order_Item_Product' ) ) continue;
+        $pid = (int) $item->get_variation_id();
+        if ( $pid <= 0 ) $pid = (int) $item->get_product_id();
+        if ( $pid <= 0 ) continue;
+        $qty = max( 0, (float) $item->get_quantity() );
+        if ( $qty <= 0 ) continue;
+        $product = wc_get_product( $pid );
+        if ( ! $product ) continue;
+        wc_update_product_stock( $product, $qty, 'increase' );
+    }
+    $order->update_meta_data( '_wc_suf_hold_stock_released', 'yes' );
+    $order->save_meta_data();
+}, 20 );
+
+add_action( 'admin_menu', function() {
+    $cap = current_user_can('manage_woocommerce') ? 'manage_woocommerce' : 'manage_options';
+    add_submenu_page(
+        'wc-stock-audit-detailed',
+        'تنظیمات',
+        'تنظیمات',
+        $cap,
+        'wc-suf-settings',
+        'wc_suf_render_settings_page'
+    );
+}, 60 );
+
+function wc_suf_render_settings_page() {
+    if( ! current_user_can('manage_woocommerce') && ! current_user_can('manage_options') ) return;
+    if ( isset($_POST['wc_suf_save_settings']) ) {
+        check_admin_referer( 'wc_suf_save_settings' );
+        $minutes = isset($_POST['wc_suf_sale_hold_minutes']) ? absint($_POST['wc_suf_sale_hold_minutes']) : 30;
+        update_option( 'wc_suf_sale_hold_minutes', max( 1, $minutes ) );
+        echo '<div class="notice notice-success"><p>تنظیمات ذخیره شد.</p></div>';
+    }
+    $minutes = wc_suf_get_sale_hold_minutes();
+    echo '<div class="wrap" dir="rtl"><h1>تنظیمات</h1><form method="post">';
+    wp_nonce_field( 'wc_suf_save_settings' );
+    echo '<table class="form-table"><tr><th scope="row">زمان هولد کردن سفارش فروش (دقیقه)</th><td><input type="number" min="1" name="wc_suf_sale_hold_minutes" value="'.esc_attr($minutes).'" class="small-text"></td></tr></table>';
+    submit_button( 'ذخیره تنظیمات', 'primary', 'wc_suf_save_settings' );
+    echo '</form></div>';
+}
+
 function wc_suf_log_woocommerce_order_sale( $order_id ) {
     if ( ! function_exists('wc_get_order') ) {
         return;
@@ -14,6 +105,9 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     }
 
     if ( 'yes' === $order->get_meta('_wc_suf_sale_logged', true) ) {
+        return;
+    }
+    if ( 'yes' === $order->get_meta('_wc_suf_sale_hold_active', true ) && $order->has_status( 'pending' ) ) {
         return;
     }
 
