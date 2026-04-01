@@ -1,9 +1,46 @@
 <?php
+if ( ! defined( 'WC_SUF_PRODUCTION_STOCK_META_KEY' ) ) {
+    define( 'WC_SUF_PRODUCTION_STOCK_META_KEY', '_wc_suf_production_stock' );
+}
+
+function wc_suf_get_production_stock_meta_qty( $product_id ) {
+    $raw = get_post_meta( absint( $product_id ), WC_SUF_PRODUCTION_STOCK_META_KEY, true );
+    if ( $raw === '' || $raw === null ) {
+        return null;
+    }
+    if ( ! is_numeric( $raw ) ) {
+        return null;
+    }
+    return max( 0, (int) $raw );
+}
+
+function wc_suf_set_production_stock_meta_qty( $product_id, $qty ) {
+    update_post_meta( absint( $product_id ), WC_SUF_PRODUCTION_STOCK_META_KEY, max( 0, (int) $qty ) );
+}
+
 function wc_suf_get_production_stock_qty( $product_id ) {
     global $wpdb;
     $table = $wpdb->prefix.'stock_production_inventory';
-    $qty = $wpdb->get_var( $wpdb->prepare("SELECT qty FROM `$table` WHERE product_id = %d", absint($product_id) ) );
-    return (int) ($qty ?? 0);
+    $pid = absint( $product_id );
+    $qty = $wpdb->get_var( $wpdb->prepare("SELECT qty FROM `$table` WHERE product_id = %d", $pid ) );
+    $table_qty = (int) ( $qty ?? 0 );
+
+    $meta_qty = wc_suf_get_production_stock_meta_qty( $pid );
+    if ( null !== $meta_qty ) {
+        if ( $meta_qty !== $table_qty ) {
+            $wpdb->update(
+                $table,
+                [ 'qty' => $meta_qty, 'updated_at' => current_time('mysql') ],
+                [ 'product_id' => $pid ],
+                [ '%f', '%s' ],
+                [ '%d' ]
+            );
+        }
+        return $meta_qty;
+    }
+
+    wc_suf_set_production_stock_meta_qty( $pid, $table_qty );
+    return $table_qty;
 }
 
 function wc_suf_ensure_production_inventory_row( $product ) {
@@ -54,7 +91,22 @@ function wc_suf_get_production_stock_qty_for_update_strict( $product ) {
         return new WP_Error( 'production_lock_read_empty', 'خواندن موجودی تولید با قفل‌گذاری نتیجه‌ای برنگرداند. لطفاً دوباره تلاش کنید.' );
     }
 
-    return (int) $qty;
+    $locked_qty = (int) $qty;
+    $meta_qty = wc_suf_get_production_stock_meta_qty( $pid );
+    if ( null !== $meta_qty && $meta_qty !== $locked_qty ) {
+        $locked_qty = $meta_qty;
+        $wpdb->update(
+            $table,
+            [ 'qty' => $locked_qty, 'updated_at' => current_time('mysql') ],
+            [ 'product_id' => $pid ],
+            [ '%f', '%s' ],
+            [ '%d' ]
+        );
+    } elseif ( null === $meta_qty ) {
+        wc_suf_set_production_stock_meta_qty( $pid, $locked_qty );
+    }
+
+    return $locked_qty;
 }
 
 function wc_suf_set_production_stock_qty( $product, $new_qty ) {
@@ -82,6 +134,7 @@ function wc_suf_set_production_stock_qty( $product, $new_qty ) {
     if ( (int) $verify_qty !== max( 0, (int) $new_qty ) ) {
         return new WP_Error( 'production_verify_failed', 'صحت‌سنجی موجودی انبار تولید ناموفق بود.' );
     }
+    wc_suf_set_production_stock_meta_qty( $pid, $new_qty );
 
     return true;
 }
@@ -111,6 +164,7 @@ function wc_suf_update_production_stock_qty( $product, $delta ) {
     } else {
         $wpdb->insert( $table, $data, [ '%d','%s','%s','%s','%d','%s','%f','%s' ] );
     }
+    wc_suf_set_production_stock_meta_qty( $pid, $new );
 
     return [ $current, $new ];
 }
