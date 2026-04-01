@@ -657,6 +657,7 @@ add_shortcode('stock_update_form', function($atts){
             const isTransfer = (opType === 'transfer');
             const isReturnMain = (opType === 'return' && returnDestination === 'main');
             const isReturnTeh  = (opType === 'return' && returnDestination === 'teh');
+            const isSaleOperation = (opType === 'sale' || opType === 'sale_teh');
 
             theadRow.append('<th style="padding:8px; text-align:right; width:110px">ID</th>');
             theadRow.append('<th style="padding:8px; text-align:right">محصول</th>');
@@ -672,6 +673,8 @@ add_shortcode('stock_update_form', function($atts){
                 theadRow.append('<th style="padding:8px; text-align:center; width:170px">موجودی انبار اصلی</th>');
             } else if (isReturnTeh){
                 theadRow.append('<th style="padding:8px; text-align:center; width:180px">موجودی انبار تهران‌پارس</th>');
+            } else if (isSaleOperation){
+                theadRow.append('<th style="padding:8px; text-align:center; width:170px">موجودی انبار اصلی</th>');
             }
             theadRow.append('<th style="padding:8px; text-align:center; width:280px">تعداد (+/−)</th>');
             theadRow.append('<th style="padding:8px; text-align:center; width:100px">حذف</th>');
@@ -707,6 +710,10 @@ add_shortcode('stock_update_form', function($atts){
                     const p = findById(it.id);
                     const returnStock = (returnDestination === 'main') ? (+p.wc_stock || 0) : (+p.teh_stock || 0);
                     tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(returnStock)}</td>`);
+                } else if (isSaleOperation){
+                    const p = findById(it.id);
+                    const mainStock = +((p && p.wc_stock) || 0);
+                    tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(mainStock)}</td>`);
                 }
 
                 const qtyControls = $(`
