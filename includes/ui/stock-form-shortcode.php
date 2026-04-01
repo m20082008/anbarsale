@@ -655,6 +655,8 @@ add_shortcode('stock_update_form', function($atts){
             const isOutMain = (opType === 'out' && outDestination === 'main');
             const isOutTeh  = (opType === 'out' && outDestination === 'teh');
             const isTransfer = (opType === 'transfer');
+            const isReturnMain = (opType === 'return' && returnDestination === 'main');
+            const isReturnTeh  = (opType === 'return' && returnDestination === 'teh');
 
             theadRow.append('<th style="padding:8px; text-align:right; width:110px">ID</th>');
             theadRow.append('<th style="padding:8px; text-align:right">محصول</th>');
@@ -666,6 +668,10 @@ add_shortcode('stock_update_form', function($atts){
             } else if (isTransfer){
                 const dstLabel = (transferDestination === 'main') ? 'موجودی انبار اصلی' : (transferDestination === 'teh' ? 'موجودی انبار تهران‌پارس' : 'موجودی انبار مقصد');
                 theadRow.append(`<th style="padding:8px; text-align:center; width:180px">${escapeHtml(dstLabel)}</th>`);
+            } else if (isReturnMain){
+                theadRow.append('<th style="padding:8px; text-align:center; width:170px">موجودی انبار اصلی</th>');
+            } else if (isReturnTeh){
+                theadRow.append('<th style="padding:8px; text-align:center; width:180px">موجودی انبار تهران‌پارس</th>');
             }
             theadRow.append('<th style="padding:8px; text-align:center; width:280px">تعداد (+/−)</th>');
             theadRow.append('<th style="padding:8px; text-align:center; width:100px">حذف</th>');
@@ -697,6 +703,10 @@ add_shortcode('stock_update_form', function($atts){
                     const p = findById(it.id);
                     const dstStock = getTransferWarehouseStockByProduct(p, transferDestination);
                     tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(dstStock)}</td>`);
+                } else if (isReturnMain || isReturnTeh){
+                    const p = findById(it.id);
+                    const returnStock = (returnDestination === 'main') ? (+p.wc_stock || 0) : (+p.teh_stock || 0);
+                    tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(returnStock)}</td>`);
                 }
 
                 const qtyControls = $(`
@@ -996,6 +1006,11 @@ add_shortcode('stock_update_form', function($atts){
             }
             return qty;
         }
+        function lockReturnDestinationIfNeeded(){
+            const $destination = $('#return-destination');
+            const hasSelection = String($destination.val() || '') !== '';
+            $destination.prop('disabled', hasSelection);
+        }
 
         refreshPickerOpenButton();
         updateModalSubtitle();
@@ -1247,9 +1262,11 @@ add_shortcode('stock_update_form', function($atts){
                 returnDestination = 'teh';
                 $(this).val('teh');
             }
+            lockReturnDestinationIfNeeded();
             refreshPickerOpenButton();
             $('#btn-save').prop('disabled', !canSave());
             updateModalSubtitle();
+            renderTable();
             if ($modal.is(':visible')) {
                 renderPickerResults();
             }
@@ -1395,6 +1412,7 @@ add_shortcode('stock_update_form', function($atts){
                             $('#transfer-source').val('');
                             $('#transfer-destination').html('<option value="">انتخاب انبار مقصد...</option>');
                             $('#return-destination').val('');
+                            $('#return-destination').prop('disabled', false);
                             $('#return-reason').val('');
                             $('#sale-customer-name').val('');
                             $('#sale-customer-mobile').val('');
