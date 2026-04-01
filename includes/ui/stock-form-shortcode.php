@@ -750,9 +750,8 @@ add_shortcode('stock_update_form', function($atts){
                     const returnStock = (returnDestination === 'main') ? (+p.wc_stock || 0) : (+p.teh_stock || 0);
                     tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(returnStock)}</td>`);
                 } else if (isSaleOperation){
-                    const p = findById(it.id);
-                    const mainStock = +((p && p.wc_stock) || 0);
-                    tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(mainStock)}</td>`);
+                    const liveMainStock = getSaleLiveMainStockByItem(it);
+                    tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(liveMainStock)}</td>`);
                 }
 
                 const qtyControls = $(`
@@ -818,6 +817,13 @@ add_shortcode('stock_update_form', function($atts){
             if(!it) return;
             const sourceStock = findMainStockById(it.id);
             if(it.qty > sourceStock){ it.qty = sourceStock; }
+        }
+
+        function getSaleLiveMainStockByItem(it){
+            if(!it) return 0;
+            const currentMainStock = findMainStockById(it.id);
+            const selectedQty = Math.max(0, parseInt(it.qty, 10) || 0);
+            return Math.max(0, currentMainStock - selectedQty);
         }
 
         function openModal(){
