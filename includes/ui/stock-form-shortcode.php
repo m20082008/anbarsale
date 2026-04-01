@@ -473,6 +473,17 @@ add_shortcode('stock_update_form', function($atts){
         function findLabelById(id){ const f = findById(id); return f ? f.label : ''; }
         function findProductionStockById(id){ const f = findById(id); return f ? (+f.prod_stock || 0) : 0; }
         function findMainStockById(id){ const f = findById(id); return f ? (+f.wc_stock || 0) : 0; }
+        function getSelectedSaleQtyById(id){
+            if(!Array.isArray(items) || items.length === 0) return 0;
+            const row = items.find(x => String(x.id) === String(id));
+            if(!row) return 0;
+            return Math.max(0, parseInt(row.qty, 10) || 0);
+        }
+        function findRemainingMainStockById(id){
+            const currentMainStock = findMainStockById(id);
+            const selectedQty = getSelectedSaleQtyById(id);
+            return Math.max(0, currentMainStock - selectedQty);
+        }
         function warehouseLabel(code){
             if(code === 'main') return 'انبار اصلی';
             if(code === 'teh') return 'انبار تهران پارس';
@@ -583,7 +594,8 @@ add_shortcode('stock_update_form', function($atts){
                 return `ID: ${pid} | موجودی انبار تولید: ${prod}`;
             }
             if(opType === 'sale' || opType === 'sale_teh'){
-                return `ID: ${pid} | موجودی انبار تولید: ${prod} | موجودی انبار اصلی: ${(+p.wc_stock || 0)}`;
+                const remainingMainStock = findRemainingMainStockById(pid);
+                return `ID: ${pid} | موجودی انبار تولید: ${prod} | موجودی لحظه‌ای انبار اصلی: ${remainingMainStock}`;
             }
             return `ID: ${pid} | موجودی انبار تولید: ${prod}`;
         }
@@ -1048,11 +1060,11 @@ add_shortcode('stock_update_form', function($atts){
         }
         function capQtyForSale(pid, qty, showAlert){
             if(opType !== 'sale' && opType !== 'sale_teh') return qty;
-            const stock = findMainStockById(pid);
+            const stock = findRemainingMainStockById(pid);
             if (qty > stock){
                 if (showAlert){
                     const name = findLabelById(pid) || ('#'+pid);
-                    alert(`برای "${name}" حداکثر قابل انتخاب ${stock} عدد است (موجودی انبار اصلی).`);
+                    alert(`برای "${name}" حداکثر قابل انتخاب ${stock} عدد است (موجودی لحظه‌ای انبار اصلی).`);
                 }
                 return stock;
             }
@@ -1173,9 +1185,9 @@ add_shortcode('stock_update_form', function($atts){
                         }
                     }
                     if (opType === 'sale' || opType === 'sale_teh'){
-                        const sourceStock = findMainStockById(pid);
+                        const sourceStock = findRemainingMainStockById(pid);
                         if (qty > sourceStock){
-                            alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی انبار اصلی است.`);
+                            alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی لحظه‌ای انبار اصلی است.`);
                             return false;
                         }
                     }
