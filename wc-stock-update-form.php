@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: WC Stock Update Form
- * Description: فرم مدیریت ورود/خروج انبار تولید + چاپ لیبل (ساده + ورییشن) با لاگ گروهی (batch)، گزارش ادمین/فرانت، گروه‌بندی pa_multi، نمایش موجودی و ID در سرچ، ثبت در جدول اختصاصی انبار تولید، و همگام‌سازی خروجی با ووکامرس یا YITH تهرانپارس.
+ * Description: فرم مدیریت ورود/خروج انبار تولید + چاپ لیبل (ساده + ورییشن) بدون عملیات فروش و بدون ثبت/نمایش لاگ.
  * Author: Sepand & Narges
  * Version: 2.6.0
  */
@@ -27,12 +27,9 @@ $wc_suf_modules = [
     'includes/helpers/helpers.php',
     'includes/services/documents.php',
     'includes/services/production-stock.php',
-    'includes/hooks/order-sales.php',
     'includes/hooks/admin-order-stock-guard.php',
     'includes/ui/stock-form-shortcode.php',
-    'includes/ajax/customer-lookup.php',
     'includes/ajax/save-stock-update.php',
-    'includes/reports/reports.php',
 ];
 
 foreach ( $wc_suf_modules as $wc_suf_module ) {

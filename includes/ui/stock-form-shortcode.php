@@ -74,7 +74,7 @@ add_shortcode('stock_update_form', function($atts){
         return ob_get_clean();
     }
     if( ! wc_suf_current_user_is_pos_manager() ){
-        return '<div dir="rtl" style="color:#b91c1c">این فرم فقط برای کاربران با نقش formeditor، marjoo، sale یا tehsale در دسترس است.</div>';
+        return '<div dir="rtl" style="color:#b91c1c">این فرم فقط برای کاربران با نقش formeditor یا marjoo در دسترس است.</div>';
     }
     $allowed_ops = wc_suf_get_allowed_ops_for_current_user();
     $is_marjoo_only = wc_suf_is_marjoo_only_user();
