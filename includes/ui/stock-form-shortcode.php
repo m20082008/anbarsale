@@ -762,8 +762,8 @@ add_shortcode('stock_update_form', function($atts){
                     const returnStock = (returnDestination === 'main') ? (+p.wc_stock || 0) : (+p.teh_stock || 0);
                     tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(returnStock)}</td>`);
                 } else if (isSaleOperation){
-                    const liveMainStock = getSaleLiveMainStockByItem(it);
-                    tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(liveMainStock)}</td>`);
+                    const mainStock = findMainStockById(it.id);
+                    tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(mainStock)}</td>`);
                 }
 
                 const qtyControls = $(`
@@ -831,13 +831,6 @@ add_shortcode('stock_update_form', function($atts){
             if(it.qty > sourceStock){ it.qty = sourceStock; }
         }
 
-        function getSaleLiveMainStockByItem(it){
-            if(!it) return 0;
-            const currentMainStock = findMainStockById(it.id);
-            const selectedQty = Math.max(0, parseInt(it.qty, 10) || 0);
-            return Math.max(0, currentMainStock - selectedQty);
-        }
-
         function openModal(){
             if(!opType) return;
             updateModalSubtitle();
@@ -849,6 +842,17 @@ add_shortcode('stock_update_form', function($atts){
             buildAttributeFilters();
             $q.trigger('focus');
             renderPickerResults();
+
+            if ((opType === 'sale' || opType === 'sale_teh') && items.length > 0){
+                const ids = items.map(it => String(it.id || '')).filter(Boolean);
+                refreshStocksBeforeResult(ids).done(function(refreshRes){
+                    if(refreshRes && refreshRes.success && refreshRes.data && refreshRes.data.stocks){
+                        updateProductStocksInMemory(refreshRes.data.stocks);
+                        renderTable();
+                        renderPickerResults();
+                    }
+                });
+            }
         }
 
         function closeModal(){
