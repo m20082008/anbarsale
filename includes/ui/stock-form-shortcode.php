@@ -1433,7 +1433,10 @@ add_shortcode('stock_update_form', function($atts){
                                 html += '<div style="margin-top:8px"><a href="'+csvUrl+'" target="_blank" rel="noopener" style="color:#1d4ed8; font-weight:700">چاپ لیبل (HTML)</a></div>';
                             }
                             if(wordUrl){
-                                html += '<div style="margin-top:8px"><a href="'+wordUrl+'" target="_blank" rel="noopener" style="color:#1d4ed8; font-weight:700">دانلود رسید عملیات (HTML)</a></div>';
+                                const receiptLabel = (opType === 'sale' || opType === 'sale_teh')
+                                    ? 'دانلود رسید فروش (HTML)'
+                                    : 'دانلود رسید عملیات (HTML)';
+                                html += '<div style="margin-top:8px"><a href="'+wordUrl+'" target="_blank" rel="noopener" style="color:#1d4ed8; font-weight:700">'+receiptLabel+'</a></div>';
                             }
                             $('#save-result').html(html).show();
                             alert(msg);

@@ -521,6 +521,10 @@ function wc_suf_save_stock_update_handler(){
             $sale_order->set_status( 'processing', 'ثبت سفارش از فرم عملیات فروش انبار تولید.' );
             $sale_order->save();
             wc_reduce_stock_levels( $sale_order->get_id() );
+
+            if ( function_exists( 'wc_suf_log_woocommerce_order_sale' ) ) {
+                wc_suf_log_woocommerce_order_sale( $sale_order->get_id() );
+            }
         } catch ( Exception $e ) {
             if ( $tx_started ) {
                 $wpdb->query('ROLLBACK');
@@ -531,6 +535,9 @@ function wc_suf_save_stock_update_handler(){
 
     $csv_file_url = '';
     $word_file_url = '';
+    if ( $is_sale_operation && $sale_order && $sale_order->get_id() ) {
+        $word_file_url = (string) $sale_order->get_meta( '_wc_suf_sale_receipt_html', true );
+    }
     if ( ! $is_sale_operation && ! empty($csv_rows) ) {
         $csv_result = wc_suf_generate_batch_label_html( $batch_code, $csv_rows );
         if ( is_wp_error( $csv_result ) ) {
