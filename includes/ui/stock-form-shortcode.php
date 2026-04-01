@@ -414,10 +414,6 @@ add_shortcode('stock_update_form', function($atts){
         const userCode = urlKey || defaultShortcodeKey;
 
         const items = [];
-        const allProductIds = allProducts
-            .map(function(p){ return parseInt(p && p.id, 10); })
-            .filter(function(v){ return Number.isFinite(v) && v > 0; });
-        let pickerOpenCount = 0;
         let opType = null;
         let outDestination = null;
         let transferSource = null;
@@ -1067,26 +1063,7 @@ add_shortcode('stock_update_form', function($atts){
 
         $('#btn-open-picker').on('click', function(){
             if(!canOpenPicker()) return;
-            const shouldRefreshStocks = ((opType === 'sale' || opType === 'sale_teh') && pickerOpenCount >= 1);
-            if(!shouldRefreshStocks){
-                pickerOpenCount++;
-                openModal();
-                return;
-            }
-
-            const $openBtn = $(this);
-            const originalText = $openBtn.text();
-            $openBtn.prop('disabled', true).css({opacity: 0.7, cursor: 'wait'}).text('در حال به‌روزرسانی موجودی...');
-
-            refreshStocksBeforeResult(allProductIds).done(function(refreshRes){
-                if(refreshRes && refreshRes.success && refreshRes.data && refreshRes.data.stocks){
-                    updateProductStocksInMemory(refreshRes.data.stocks);
-                }
-            }).always(function(){
-                $openBtn.prop('disabled', false).css({opacity: 1, cursor: 'pointer'}).text(originalText);
-                pickerOpenCount++;
-                openModal();
-            });
+            openModal();
         });
 
         $('#wc-suf-modal-close').on('click', closeModal);
@@ -1156,64 +1133,99 @@ add_shortcode('stock_update_form', function($atts){
 
         $('#wc-suf-picker-add').on('click', function(){
             if(!opType) return;
-
-            let addedAny = false;
-
-            for (const pid in pickerQty){
-                let qty = +pickerQty[pid];
-                if (!qty || qty <= 0) continue;
-
-                const name  = findLabelById(pid) || '(بدون نام)';
-                const stock = findProductionStockById(pid);
-
-                if (opType === 'out' && qty > stock){
-                    alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی انبار تولید است.`);
-                    return;
-                }
-                if (opType === 'transfer'){
-                    const sourceStock = findTransferSourceStockById(pid);
-                    if (qty > sourceStock){
-                        alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی انبار مبدا است.`);
-                        return;
-                    }
-                }
-                if (opType === 'sale' || opType === 'sale_teh'){
-                    const sourceStock = findMainStockById(pid);
-                    if (qty > sourceStock){
-                        alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی انبار اصلی است.`);
-                        return;
-                    }
-                }
-
-                const existingIdx = items.findIndex(x => String(x.id) === String(pid));
-                if (existingIdx >= 0){
-                    items[existingIdx].qty = (items[existingIdx].qty || 0) + qty;
-                    items[existingIdx].stock = stock;
-                    enforceOutLimit(existingIdx);
-                    enforceTransferLimit(existingIdx);
-                    enforceSaleLimit(existingIdx);
-                } else {
-                    items.push({id: pid, name, qty, stock});
-                    enforceOutLimit(items.length - 1);
-                    enforceTransferLimit(items.length - 1);
-                    enforceSaleLimit(items.length - 1);
-                }
-
-                addedAny = true;
-            }
-
-            if (!addedAny){
+            const selectedIds = Object.keys(pickerQty).filter(function(pid){
+                return (+pickerQty[pid] || 0) > 0;
+            });
+            if (selectedIds.length === 0){
                 alert('هیچ محصولی با تعداد بالاتر از صفر انتخاب نشده است.');
                 return;
             }
 
-            for (const pid in pickerQty){
-                if (Object.prototype.hasOwnProperty.call(pickerQty, pid)) pickerQty[pid] = 0;
+            const $addBtn = $(this);
+            const originalText = $addBtn.text();
+            $addBtn.prop('disabled', true).css({opacity: 0.7, cursor: 'wait'}).text('در حال بررسی موجودی...');
+
+            const addItemsToTable = function(){
+                let addedAny = false;
+
+                for (const pid in pickerQty){
+                    let qty = +pickerQty[pid];
+                    if (!qty || qty <= 0) continue;
+
+                    const name  = findLabelById(pid) || '(بدون نام)';
+                    const stock = findProductionStockById(pid);
+
+                    if (opType === 'out' && qty > stock){
+                        alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی انبار تولید است.`);
+                        return false;
+                    }
+                    if (opType === 'transfer'){
+                        const sourceStock = findTransferSourceStockById(pid);
+                        if (qty > sourceStock){
+                            alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی انبار مبدا است.`);
+                            return false;
+                        }
+                    }
+                    if (opType === 'sale' || opType === 'sale_teh'){
+                        const sourceStock = findMainStockById(pid);
+                        if (qty > sourceStock){
+                            alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی انبار اصلی است.`);
+                            return false;
+                        }
+                    }
+
+                    const existingIdx = items.findIndex(x => String(x.id) === String(pid));
+                    if (existingIdx >= 0){
+                        items[existingIdx].qty = (items[existingIdx].qty || 0) + qty;
+                        items[existingIdx].stock = stock;
+                        enforceOutLimit(existingIdx);
+                        enforceTransferLimit(existingIdx);
+                        enforceSaleLimit(existingIdx);
+                    } else {
+                        items.push({id: pid, name, qty, stock});
+                        enforceOutLimit(items.length - 1);
+                        enforceTransferLimit(items.length - 1);
+                        enforceSaleLimit(items.length - 1);
+                    }
+
+                    addedAny = true;
+                }
+
+                if (!addedAny){
+                    alert('هیچ محصولی با تعداد بالاتر از صفر انتخاب نشده است.');
+                    return false;
+                }
+
+                for (const pid in pickerQty){
+                    if (Object.prototype.hasOwnProperty.call(pickerQty, pid)) pickerQty[pid] = 0;
+                }
+
+                renderTable();
+                syncSaleHoldOrder(true);
+                closeModal();
+                return true;
+            };
+
+            const afterDone = function(){
+                $addBtn.prop('disabled', false).css({opacity: 1, cursor: 'pointer'}).text(originalText);
+            };
+
+            if (opType === 'sale' || opType === 'sale_teh'){
+                refreshStocksBeforeResult(selectedIds).done(function(refreshRes){
+                    if(refreshRes && refreshRes.success && refreshRes.data && refreshRes.data.stocks){
+                        updateProductStocksInMemory(refreshRes.data.stocks);
+                        renderPickerResults();
+                        renderTable();
+                    }
+                    addItemsToTable();
+                }).fail(function(){
+                    alert('به‌روزرسانی موجودی انجام نشد. لطفاً دوباره تلاش کنید.');
+                }).always(afterDone);
+                return;
             }
 
-            renderTable();
-            syncSaleHoldOrder(true);
-            closeModal();
+            addItemsToTable();
+            afterDone();
         });
 
         $('input[name="op-type"]').on('change', function(){
@@ -1473,7 +1485,6 @@ add_shortcode('stock_update_form', function($atts){
 
                         const finishSaveUi = function(refreshFailed){
                             items.length = 0;
-                            pickerOpenCount = 0;
                             opType = null;
                             outDestination = null;
                             transferSource = null;
