@@ -173,7 +173,7 @@ function wc_suf_update_production_stock_qty( $product, $delta ) {
     return [ $current, $new ];
 }
 
-add_action( 'updated_postmeta', 'wc_suf_maybe_sync_production_stock_from_meta', 10, 4 );
+add_action( 'updated_post_meta', 'wc_suf_maybe_sync_production_stock_from_meta', 10, 4 );
 add_action( 'added_post_meta', 'wc_suf_maybe_sync_production_stock_from_meta', 10, 4 );
 
 function wc_suf_maybe_sync_production_stock_from_meta( $meta_id, $product_id, $meta_key, $meta_value ) {
@@ -195,6 +195,53 @@ function wc_suf_maybe_sync_production_stock_from_meta( $meta_id, $product_id, $m
     wc_suf_ensure_production_inventory_row( $product );
     wc_suf_set_production_stock_qty( $product, wc_suf_normalize_production_stock_qty( $meta_value ) );
     $sync_in_progress = false;
+}
+
+add_action( 'admin_init', 'wc_suf_backfill_production_stock_meta_keys' );
+function wc_suf_backfill_production_stock_meta_keys() {
+    if ( ! current_user_can( 'manage_woocommerce' ) ) {
+        return;
+    }
+
+    $done_flag = 'wc_suf_production_stock_meta_backfill_v2_done';
+    if ( 'yes' === get_option( $done_flag, 'no' ) ) {
+        return;
+    }
+
+    global $wpdb;
+    $inventory_table = $wpdb->prefix . 'stock_production_inventory';
+    $postmeta_table  = $wpdb->postmeta;
+
+    $rows = $wpdb->get_results(
+        "SELECT product_id, qty FROM `{$inventory_table}`",
+        ARRAY_A
+    );
+
+    if ( empty( $rows ) ) {
+        update_option( $done_flag, 'yes', false );
+        return;
+    }
+
+    foreach ( $rows as $row ) {
+        $pid = absint( $row['product_id'] ?? 0 );
+        if ( ! $pid ) {
+            continue;
+        }
+
+        $meta_exists = (int) $wpdb->get_var( $wpdb->prepare(
+            "SELECT meta_id FROM {$postmeta_table} WHERE post_id = %d AND meta_key = %s LIMIT 1",
+            $pid,
+            WC_SUF_PRODUCTION_STOCK_META_KEY
+        ) );
+
+        if ( $meta_exists > 0 ) {
+            continue;
+        }
+
+        wc_suf_sync_production_stock_meta( $pid, wc_suf_normalize_production_stock_qty( $row['qty'] ?? 0 ) );
+    }
+
+    update_option( $done_flag, 'yes', false );
 }
 
 function wc_suf_next_batch_code( $op_type ){
