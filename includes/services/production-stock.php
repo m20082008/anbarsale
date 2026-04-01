@@ -1,9 +1,61 @@
 <?php
+if ( ! defined( 'WC_SUF_PRODUCTION_STOCK_META_KEY' ) ) {
+    define( 'WC_SUF_PRODUCTION_STOCK_META_KEY', '_wc_suf_production_stock_qty' );
+}
+
+function wc_suf_normalize_production_stock_qty( $qty ) {
+    return max( 0, (int) $qty );
+}
+
+function wc_suf_get_production_stock_meta_qty( $product_id ) {
+    $raw = get_post_meta( absint( $product_id ), WC_SUF_PRODUCTION_STOCK_META_KEY, true );
+    if ( '' === $raw || null === $raw ) {
+        return null;
+    }
+
+    return wc_suf_normalize_production_stock_qty( $raw );
+}
+
+function wc_suf_sync_production_stock_meta( $product_id, $qty ) {
+    static $sync_in_progress = false;
+
+    if ( $sync_in_progress ) {
+        return;
+    }
+
+    $pid = absint( $product_id );
+    if ( ! $pid ) {
+        return;
+    }
+
+    $sync_in_progress = true;
+    update_post_meta( $pid, WC_SUF_PRODUCTION_STOCK_META_KEY, wc_suf_normalize_production_stock_qty( $qty ) );
+    $sync_in_progress = false;
+}
+
 function wc_suf_get_production_stock_qty( $product_id ) {
     global $wpdb;
     $table = $wpdb->prefix.'stock_production_inventory';
-    $qty = $wpdb->get_var( $wpdb->prepare("SELECT qty FROM `$table` WHERE product_id = %d", absint($product_id) ) );
-    return (int) ($qty ?? 0);
+    $pid = absint( $product_id );
+    $qty = $wpdb->get_var( $wpdb->prepare("SELECT qty FROM `$table` WHERE product_id = %d", $pid ) );
+
+    if ( null !== $qty ) {
+        $qty = wc_suf_normalize_production_stock_qty( $qty );
+        wc_suf_sync_production_stock_meta( $pid, $qty );
+        return $qty;
+    }
+
+    $meta_qty = wc_suf_get_production_stock_meta_qty( $pid );
+    if ( null !== $meta_qty ) {
+        $product = wc_get_product( $pid );
+        if ( $product ) {
+            wc_suf_ensure_production_inventory_row( $product );
+            wc_suf_set_production_stock_qty( $product, $meta_qty );
+        }
+        return $meta_qty;
+    }
+
+    return 0;
 }
 
 function wc_suf_ensure_production_inventory_row( $product ) {
@@ -63,13 +115,15 @@ function wc_suf_set_production_stock_qty( $product, $new_qty ) {
     $pid   = absint( $product->get_id() );
     if ( ! $pid ) return;
 
+    $normalized_qty = wc_suf_normalize_production_stock_qty( $new_qty );
+
     $data = [
         'product_name'     => wc_suf_full_product_label( $product ),
         'sku'              => $product->get_sku() ?: null,
         'product_type'     => $product->get_type(),
         'parent_id'        => $product->is_type('variation') ? $product->get_parent_id() : null,
         'attributes_text'  => wc_suf_get_product_attributes_text( $product ),
-        'qty'              => max( 0, (int) $new_qty ),
+        'qty'              => $normalized_qty,
         'updated_at'       => current_time('mysql'),
     ];
 
@@ -79,9 +133,11 @@ function wc_suf_set_production_stock_qty( $product, $new_qty ) {
     }
 
     $verify_qty = $wpdb->get_var( $wpdb->prepare("SELECT qty FROM `$table` WHERE product_id = %d", $pid ) );
-    if ( (int) $verify_qty !== max( 0, (int) $new_qty ) ) {
+    if ( (int) $verify_qty !== $normalized_qty ) {
         return new WP_Error( 'production_verify_failed', 'صحت‌سنجی موجودی انبار تولید ناموفق بود.' );
     }
+
+    wc_suf_sync_production_stock_meta( $pid, $normalized_qty );
 
     return true;
 }
@@ -92,7 +148,7 @@ function wc_suf_update_production_stock_qty( $product, $delta ) {
 
     $pid = absint( $product->get_id() );
     $current = wc_suf_get_production_stock_qty( $pid );
-    $new = max( 0, $current + (int) $delta );
+    $new = wc_suf_normalize_production_stock_qty( $current + (int) $delta );
 
     $data = [
         'product_id'       => $pid,
@@ -112,7 +168,33 @@ function wc_suf_update_production_stock_qty( $product, $delta ) {
         $wpdb->insert( $table, $data, [ '%d','%s','%s','%s','%d','%s','%f','%s' ] );
     }
 
+    wc_suf_sync_production_stock_meta( $pid, $new );
+
     return [ $current, $new ];
+}
+
+add_action( 'updated_postmeta', 'wc_suf_maybe_sync_production_stock_from_meta', 10, 4 );
+add_action( 'added_post_meta', 'wc_suf_maybe_sync_production_stock_from_meta', 10, 4 );
+
+function wc_suf_maybe_sync_production_stock_from_meta( $meta_id, $product_id, $meta_key, $meta_value ) {
+    if ( WC_SUF_PRODUCTION_STOCK_META_KEY !== $meta_key ) {
+        return;
+    }
+
+    static $sync_in_progress = false;
+    if ( $sync_in_progress ) {
+        return;
+    }
+
+    $product = wc_get_product( absint( $product_id ) );
+    if ( ! $product ) {
+        return;
+    }
+
+    $sync_in_progress = true;
+    wc_suf_ensure_production_inventory_row( $product );
+    wc_suf_set_production_stock_qty( $product, wc_suf_normalize_production_stock_qty( $meta_value ) );
+    $sync_in_progress = false;
 }
 
 function wc_suf_next_batch_code( $op_type ){
