@@ -125,7 +125,7 @@ function wc_suf_generate_batch_word_receipt( $batch_code, $context, $rows ) {
     $created   = (string) ($context['created_at'] ?? current_time('mysql'));
     $jalali    = wc_suf_format_jalali_datetime($created);
     $op_label  = wc_suf_op_label($op_type);
-    $is_sale   = ( $op_type === 'sale' );
+    $is_sale   = in_array( $op_type, [ 'sale', 'sale_teh' ], true );
 
     $sum = 0;
     $rows_html = '';

@@ -531,7 +531,39 @@ function wc_suf_save_stock_update_handler(){
 
     $csv_file_url = '';
     $word_file_url = '';
-    if ( ! $is_sale_operation && ! empty($csv_rows) ) {
+    if ( ! empty($csv_rows) ) {
+        $csv_result = null;
+        $word_context = [
+            'op_type'      => $is_sale_operation
+                ? $op_type
+                : ( $op_type === 'out'
+                    ? ( $out_destination === 'teh' ? 'out_teh' : 'out_main' )
+                    : ( $op_type === 'transfer'
+                        ? ( $transfer_source === 'main' ? 'transfer_main_teh' : 'transfer_teh_main' )
+                        : ( $op_type === 'return'
+                            ? ( $return_destination === 'teh' ? 'return_teh' : 'return_main' )
+                            : $op_type
+                        )
+                    )
+                ),
+            'purpose'      => $is_sale_operation
+                ? 'رسید فروش'
+                : ( $op_type === 'out'
+                    ? ( $out_destination === 'teh' ? 'انتقال به انبار تهرانپارس' : 'خروج به انبار اصلی' )
+                    : ( $op_type === 'transfer'
+                        ? ( 'انتقال بین انبارها: ' . wc_suf_destination_label( $transfer_source ) . ' → ' . wc_suf_destination_label( $transfer_destination ) )
+                        : ( $op_type === 'return' ? ('مرجوعی - علت: '.$return_reason) : null )
+                    )
+                ),
+            'user_display' => $ulog ?: ( $uid ? ('user#'.$uid) : 'مهمان' ),
+            'user_code'    => $user_code,
+            'created_at'   => current_time('mysql'),
+        ];
+        $receipt_batch_code = ( $is_sale_operation && $sale_order && $sale_order->get_id() )
+            ? (string) $sale_order->get_order_number()
+            : $batch_code;
+
+        if ( ! $is_sale_operation ) {
         $csv_result = wc_suf_generate_batch_label_html( $batch_code, $csv_rows );
         if ( is_wp_error( $csv_result ) ) {
             if ( $tx_started ) {
@@ -557,15 +589,8 @@ function wc_suf_save_stock_update_handler(){
             }
             wp_send_json_error(['message'=>'ثبت لینک صفحه چاپ لیبل در دیتابیس ناموفق بود.']);
         }
-
-        $word_context = [
-            'op_type'      => $op_type === 'out' ? ( $out_destination === 'teh' ? 'out_teh' : 'out_main' ) : ( $op_type === 'transfer' ? ( $transfer_source === 'main' ? 'transfer_main_teh' : 'transfer_teh_main' ) : ( $op_type === 'return' ? ( $return_destination === 'teh' ? 'return_teh' : 'return_main' ) : $op_type ) ),
-            'purpose'      => $op_type === 'out' ? ( $out_destination === 'teh' ? 'انتقال به انبار تهرانپارس' : 'خروج به انبار اصلی' ) : ( $op_type === 'transfer' ? ( 'انتقال بین انبارها: ' . wc_suf_destination_label( $transfer_source ) . ' → ' . wc_suf_destination_label( $transfer_destination ) ) : ( $op_type === 'return' ? ('مرجوعی - علت: '.$return_reason) : null ) ),
-            'user_display' => $ulog ?: ( $uid ? ('user#'.$uid) : 'مهمان' ),
-            'user_code'    => $user_code,
-            'created_at'   => current_time('mysql'),
-        ];
-        $word_result = wc_suf_generate_batch_word_receipt( $batch_code, $word_context, $csv_rows );
+        }
+        $word_result = wc_suf_generate_batch_word_receipt( $receipt_batch_code, $word_context, $csv_rows );
         if ( is_wp_error( $word_result ) ) {
             if ( ! empty( $csv_result['path'] ) && file_exists( $csv_result['path'] ) ) {
                 @unlink( $csv_result['path'] );
