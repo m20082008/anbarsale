@@ -407,36 +407,67 @@ function wc_suf_save_stock_update_handler(){
         }
 
         if ( ! $is_sale_operation && in_array( $op_type, ['in','out','transfer','return','onlyLabel','sale','sale_teh'], true ) ) {
-            $move_data = [
+            $base_move_data = [
                 'batch_code'      => $batch_code,
                 'operation'       => $op_type,
-                'destination'     => ( $op_type === 'out' ) ? $out_destination : ( $op_type === 'transfer' ? $transfer_destination : ( $op_type === 'return' ? $return_destination : ( ( $op_type === 'sale' || $op_type === 'sale_teh' ) ? 'main' : ( $op_type === 'onlyLabel' ? 'label_only' : 'production' ) ) ) ),
                 'product_id'      => $pid,
                 'product_name'    => wc_suf_full_product_label( $product ),
                 'sku'             => $product->get_sku() ?: null,
                 'product_type'    => $product->get_type(),
                 'parent_id'       => $product->is_type('variation') ? $product->get_parent_id() : null,
                 'attributes_text' => wc_suf_get_product_attributes_text( $product ),
-                'old_qty'         => (float) $old_qty,
-                'change_qty'      => (float) $req,
-                'new_qty'         => (float) $new_qty,
-                'destination_old_qty' => ( $destination_old_qty === null ? null : (float) $destination_old_qty ),
-                'destination_new_qty' => ( $destination_new_qty === null ? null : (float) $destination_new_qty ),
                 'user_id'         => $uid ?: null,
                 'user_login'      => $ulog ?: null,
                 'user_code'       => $user_code ?: null,
                 'created_at'      => current_time('mysql'),
             ];
-            $wpdb->insert(
-                $move_table,
-                $move_data,
-                ['%s','%s','%s','%d','%s','%s','%s','%d','%s','%f','%f','%f','%f','%f','%d','%s','%s','%s']
-            );
-            if ( ! empty($wpdb->last_error) ) {
-                if ( $tx_started ) {
-                    $wpdb->query('ROLLBACK');
+
+            $move_rows = [];
+            if ( $op_type === 'transfer' ) {
+                $move_rows[] = array_merge(
+                    $base_move_data,
+                    [
+                        'destination'         => $transfer_source,
+                        'old_qty'             => (float) $old_qty,
+                        'change_qty'          => (float) ( -1 * $req ),
+                        'new_qty'             => (float) $new_qty,
+                        'destination_old_qty' => null,
+                        'destination_new_qty' => null,
+                    ]
+                );
+                $move_rows[] = array_merge(
+                    $base_move_data,
+                    [
+                        'destination'         => $transfer_destination,
+                        'old_qty'             => ( $destination_old_qty === null ? 0.0 : (float) $destination_old_qty ),
+                        'change_qty'          => (float) $req,
+                        'new_qty'             => ( $destination_new_qty === null ? (float) $req : (float) $destination_new_qty ),
+                        'destination_old_qty' => null,
+                        'destination_new_qty' => null,
+                    ]
+                );
+            } else {
+                $move_rows[] = array_merge(
+                    $base_move_data,
+                    [
+                        'destination'         => ( $op_type === 'out' ) ? $out_destination : ( $op_type === 'return' ? $return_destination : ( ( $op_type === 'sale' || $op_type === 'sale_teh' ) ? 'main' : ( $op_type === 'onlyLabel' ? 'label_only' : 'production' ) ) ),
+                        'old_qty'             => (float) $old_qty,
+                        'change_qty'          => (float) $req,
+                        'new_qty'             => (float) $new_qty,
+                        'destination_old_qty' => ( $destination_old_qty === null ? null : (float) $destination_old_qty ),
+                        'destination_new_qty' => ( $destination_new_qty === null ? null : (float) $destination_new_qty ),
+                    ]
+                );
+            }
+
+            foreach ( $move_rows as $move_data ) {
+                $wpdb->insert( $move_table, $move_data );
+                if ( ! empty($wpdb->last_error) ) {
+                    if ( $tx_started ) {
+                        $wpdb->query('ROLLBACK');
+                    }
+                    wp_send_json_error(['message'=>'ثبت لاگ حرکات انبار ناموفق بود.']);
                 }
-                wp_send_json_error(['message'=>'ثبت لاگ حرکات انبار ناموفق بود.']);
             }
         }
 
