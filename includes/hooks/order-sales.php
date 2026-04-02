@@ -22,13 +22,22 @@ function wc_suf_expire_sale_hold_order( $order_id ) {
     $order = wc_get_order( $order_id );
     if ( ! $order ) return;
     if ( $order->get_created_via() !== 'wc_suf_manual_sale_hold' ) return;
-    if ( ! $order->has_status( 'pending' ) ) return;
+    if ( ! $order->has_status( [ 'pending', 'initialorder' ] ) ) return;
     $order->set_status( 'instaformremove', 'انقضای زمان هولد فرم فروش اینستا.' );
     $order->save();
 }
 add_action( 'wc_suf_sale_hold_expire_event', 'wc_suf_expire_sale_hold_order', 10, 1 );
 
 add_action( 'init', function() {
+    register_post_status( 'wc-initialorder', [
+        'label'                     => 'ثبت اولیه سفارش',
+        'public'                    => true,
+        'exclude_from_search'       => false,
+        'show_in_admin_all_list'    => true,
+        'show_in_admin_status_list' => true,
+        'label_count'               => _n_noop( 'ثبت اولیه سفارش <span class="count">(%s)</span>', 'ثبت اولیه سفارش <span class="count">(%s)</span>' ),
+    ] );
+
     register_post_status( 'wc-instaformremove', [
         'label'                     => 'حذف سفارش اینستا',
         'public'                    => true,
@@ -39,9 +48,23 @@ add_action( 'init', function() {
     ] );
 } );
 add_filter( 'wc_order_statuses', function( $statuses ) {
+    $statuses['wc-initialorder'] = 'ثبت اولیه سفارش';
     $statuses['wc-instaformremove'] = 'حذف سفارش اینستا';
     return $statuses;
 } );
+
+add_filter( 'woocommerce_can_reduce_order_stock', function( $can_reduce, $order ) {
+    if ( ! $can_reduce || ! is_a( $order, 'WC_Order' ) ) {
+        return $can_reduce;
+    }
+
+    $created_via = (string) $order->get_created_via();
+    if ( in_array( $created_via, [ 'wc_suf_manual_sale', 'wc_suf_manual_sale_hold' ], true ) ) {
+        return false;
+    }
+
+    return $can_reduce;
+}, 20, 2 );
 
 add_action( 'woocommerce_order_status_instaformremove', function( $order_id ) {
     $order = wc_get_order( $order_id );
@@ -107,7 +130,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     if ( 'yes' === $order->get_meta('_wc_suf_sale_logged', true) ) {
         return;
     }
-    if ( 'yes' === $order->get_meta('_wc_suf_sale_hold_active', true ) && $order->has_status( 'pending' ) ) {
+    if ( 'yes' === $order->get_meta('_wc_suf_sale_hold_active', true ) && $order->has_status( [ 'pending', 'initialorder' ] ) ) {
         return;
     }
 

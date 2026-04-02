@@ -53,7 +53,7 @@ function wc_suf_sync_sale_hold_order_handler(){
     } else {
         $order = wc_create_order();
         $order->set_created_via( 'wc_suf_manual_sale_hold' );
-        $order->set_status( 'pending', 'ایجاد اولیه سفارش هولد از فرم فروش.' );
+        $order->set_status( 'initialorder', 'ایجاد اولیه سفارش هولد از فرم فروش.' );
     }
     if ( ! $order ) {
         wp_send_json_error(['message'=>'دسترسی به سفارش هولد ممکن نیست.']);
