@@ -424,6 +424,8 @@ add_shortcode('stock_update_form', function($atts){
         let saleCustomerMobile = '';
         let saleCustomerAddress = '';
         let saleHoldOrderId = 0;
+        let saleLiveStockRefreshTimer = null;
+        let saleLiveStockRefreshInFlight = false;
 
         const $overlay = $('#wc-suf-modal-overlay');
         const $modal   = $('#wc-suf-modal');
@@ -569,6 +571,33 @@ add_shortcode('stock_update_form', function($atts){
                     alert('خطای ارتباطی هنگام همگام‌سازی سفارش هولد.');
                 }
             });
+        }
+        function refreshSaleMainStocksNow(){
+            if(!(opType === 'sale' || opType === 'sale_teh')) return;
+            if(saleLiveStockRefreshInFlight) return;
+            const ids = items.map(it => String(it.id || '')).filter(Boolean);
+            if(ids.length === 0) return;
+            saleLiveStockRefreshInFlight = true;
+            refreshStocksBeforeResult(ids).done(function(refreshRes){
+                if(refreshRes && refreshRes.success && refreshRes.data && refreshRes.data.stocks){
+                    updateProductStocksInMemory(refreshRes.data.stocks);
+                    renderTable();
+                    renderPickerResults();
+                }
+            }).always(function(){
+                saleLiveStockRefreshInFlight = false;
+            });
+        }
+        function scheduleSaleMainStocksRefresh(delayMs){
+            if(!(opType === 'sale' || opType === 'sale_teh')) return;
+            const wait = Math.max(0, parseInt(delayMs, 10) || 1000);
+            if(saleLiveStockRefreshTimer){
+                clearTimeout(saleLiveStockRefreshTimer);
+            }
+            saleLiveStockRefreshTimer = setTimeout(function(){
+                saleLiveStockRefreshTimer = null;
+                refreshSaleMainStocksNow();
+            }, wait);
         }
         function getPickerMetaLine(p){
             const pid = String(p.id || '');
@@ -1225,15 +1254,7 @@ add_shortcode('stock_update_form', function($atts){
                 renderTable();
                 if (opType === 'sale' || opType === 'sale_teh'){
                     syncSaleHoldOrder(true).always(function(){
-                        const ids = items.map(it => String(it.id || '')).filter(Boolean);
-                        if (ids.length === 0) return;
-                        refreshStocksBeforeResult(ids).done(function(refreshRes){
-                            if(refreshRes && refreshRes.success && refreshRes.data && refreshRes.data.stocks){
-                                updateProductStocksInMemory(refreshRes.data.stocks);
-                                renderTable();
-                                renderPickerResults();
-                            }
-                        });
+                        scheduleSaleMainStocksRefresh(1000);
                     });
                 } else {
                     syncSaleHoldOrder(true);
@@ -1442,16 +1463,16 @@ add_shortcode('stock_update_form', function($atts){
 
         $('#items-table').on('click','.row-inc', function(){
             const i = +$(this).data('i'); items[i].qty++; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
-            syncSaleHoldOrder(true);
+            syncSaleHoldOrder(true).always(function(){ scheduleSaleMainStocksRefresh(1000); });
         });
         $('#items-table').on('click','.row-dec', function(){
             const i = +$(this).data('i'); items[i].qty = Math.max(1, items[i].qty-1); enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
-            syncSaleHoldOrder(true);
+            syncSaleHoldOrder(true).always(function(){ scheduleSaleMainStocksRefresh(1000); });
         });
         $('#items-table').on('change','.row-qty', function(){
             const i = +$(this).data('i'); let v = +$(this).val();
             v = Math.max(1, v||1); items[i].qty = v; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
-            syncSaleHoldOrder(true);
+            syncSaleHoldOrder(true).always(function(){ scheduleSaleMainStocksRefresh(1000); });
         });
 
         $('#items-table').on('click','.btn-del',function(){
