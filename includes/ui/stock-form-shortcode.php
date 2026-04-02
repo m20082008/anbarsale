@@ -734,7 +734,6 @@ add_shortcode('stock_update_form', function($atts){
                 theadRow.append('<th style="padding:8px; text-align:center; width:180px">موجودی انبار تهران‌پارس</th>');
             } else if (isSaleOperation){
                 theadRow.append('<th style="padding:8px; text-align:center; width:170px">موجودی انبار اصلی</th>');
-                theadRow.append('<th style="padding:8px; text-align:center; width:180px">موجودی بروز شده</th>');
             }
             theadRow.append('<th style="padding:8px; text-align:center; width:280px">تعداد (+/−)</th>');
             theadRow.append('<th style="padding:8px; text-align:center; width:100px">حذف</th>');
@@ -773,9 +772,7 @@ add_shortcode('stock_update_form', function($atts){
                 } else if (isSaleOperation){
                     const p = findById(it.id);
                     const mainStock = +((p && p.wc_stock) || 0);
-                    const updatedMainStock = Math.max(0, mainStock - (parseInt(it.qty, 10) || 0));
                     tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(mainStock)}</td>`);
-                    tr.append(`<td style="padding:8px; text-align:center; font-weight:700; color:#0f766e">${escapeHtml(updatedMainStock)}</td>`);
                 }
 
                 const qtyControls = $(`
