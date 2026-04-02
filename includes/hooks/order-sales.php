@@ -196,6 +196,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     $order_number = (string) $order->get_order_number();
     $created_at_mysql = current_time('mysql');
     $stock_source = wc_suf_get_order_stock_source( $order );
+    $stock_already_reduced = ( 'yes' === $order->get_meta( '_wc_suf_stock_already_reduced', true ) );
 
     $logged_any_item = false;
     $receipt_rows = [];
@@ -223,7 +224,12 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
 
         $change_qty = -1 * $qty;
         $item_reduced_stock = wc_suf_get_order_item_reduced_stock_qty( $item );
-        if ( $item_reduced_stock !== null && $item_reduced_stock > 0 ) {
+        if ( $stock_already_reduced ) {
+            // در فروش‌هایی که قبلاً موجودی‌شان هنگام هولد کم شده،
+            // «موجودی بعد» همان موجودی فعلی لحظه ثبت نهایی است.
+            $new_qty = $current_stock;
+            $old_qty = $current_stock + $qty;
+        } elseif ( $item_reduced_stock !== null && $item_reduced_stock > 0 ) {
             // وقتی ووکامرس قبلاً موجودی را کم کرده، موجودی فعلی همان new_qty است.
             $new_qty = $current_stock;
             $old_qty = $current_stock + $item_reduced_stock;
