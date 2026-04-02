@@ -1223,7 +1223,21 @@ add_shortcode('stock_update_form', function($atts){
                 }
 
                 renderTable();
-                syncSaleHoldOrder(true);
+                if (opType === 'sale' || opType === 'sale_teh'){
+                    syncSaleHoldOrder(true).always(function(){
+                        const ids = items.map(it => String(it.id || '')).filter(Boolean);
+                        if (ids.length === 0) return;
+                        refreshStocksBeforeResult(ids).done(function(refreshRes){
+                            if(refreshRes && refreshRes.success && refreshRes.data && refreshRes.data.stocks){
+                                updateProductStocksInMemory(refreshRes.data.stocks);
+                                renderTable();
+                                renderPickerResults();
+                            }
+                        });
+                    });
+                } else {
+                    syncSaleHoldOrder(true);
+                }
                 closeModal();
                 return true;
             };
@@ -1231,20 +1245,6 @@ add_shortcode('stock_update_form', function($atts){
             const afterDone = function(){
                 $addBtn.prop('disabled', false).css({opacity: 1, cursor: 'pointer'}).text(originalText);
             };
-
-            if (opType === 'sale' || opType === 'sale_teh'){
-                refreshStocksBeforeResult(selectedIds).done(function(refreshRes){
-                    if(refreshRes && refreshRes.success && refreshRes.data && refreshRes.data.stocks){
-                        updateProductStocksInMemory(refreshRes.data.stocks);
-                        renderPickerResults();
-                        renderTable();
-                    }
-                    addItemsToTable();
-                }).fail(function(){
-                    alert('به‌روزرسانی موجودی انجام نشد. لطفاً دوباره تلاش کنید.');
-                }).always(afterDone);
-                return;
-            }
 
             addItemsToTable();
             afterDone();
