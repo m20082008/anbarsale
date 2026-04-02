@@ -424,6 +424,8 @@ add_shortcode('stock_update_form', function($atts){
         let saleCustomerMobile = '';
         let saleCustomerAddress = '';
         let saleHoldOrderId = 0;
+        let saleLiveStockRefreshTimer = null;
+        let saleLiveStockRefreshInFlight = false;
 
         const $overlay = $('#wc-suf-modal-overlay');
         const $modal   = $('#wc-suf-modal');
@@ -473,6 +475,17 @@ add_shortcode('stock_update_form', function($atts){
         function findLabelById(id){ const f = findById(id); return f ? f.label : ''; }
         function findProductionStockById(id){ const f = findById(id); return f ? (+f.prod_stock || 0) : 0; }
         function findMainStockById(id){ const f = findById(id); return f ? (+f.wc_stock || 0) : 0; }
+        function getSelectedSaleQtyById(id){
+            if(!Array.isArray(items) || items.length === 0) return 0;
+            const row = items.find(x => String(x.id) === String(id));
+            if(!row) return 0;
+            return Math.max(0, parseInt(row.qty, 10) || 0);
+        }
+        function findRemainingMainStockById(id){
+            const currentMainStock = findMainStockById(id);
+            const selectedQty = getSelectedSaleQtyById(id);
+            return Math.max(0, currentMainStock - selectedQty);
+        }
         function warehouseLabel(code){
             if(code === 'main') return 'انبار اصلی';
             if(code === 'teh') return 'انبار تهران پارس';
@@ -559,6 +572,33 @@ add_shortcode('stock_update_form', function($atts){
                 }
             });
         }
+        function refreshSaleMainStocksNow(){
+            if(!(opType === 'sale' || opType === 'sale_teh')) return;
+            if(saleLiveStockRefreshInFlight) return;
+            const ids = items.map(it => String(it.id || '')).filter(Boolean);
+            if(ids.length === 0) return;
+            saleLiveStockRefreshInFlight = true;
+            refreshStocksBeforeResult(ids).done(function(refreshRes){
+                if(refreshRes && refreshRes.success && refreshRes.data && refreshRes.data.stocks){
+                    updateProductStocksInMemory(refreshRes.data.stocks);
+                    renderTable();
+                    renderPickerResults();
+                }
+            }).always(function(){
+                saleLiveStockRefreshInFlight = false;
+            });
+        }
+        function scheduleSaleMainStocksRefresh(delayMs){
+            if(!(opType === 'sale' || opType === 'sale_teh')) return;
+            const wait = Math.max(0, parseInt(delayMs, 10) || 1000);
+            if(saleLiveStockRefreshTimer){
+                clearTimeout(saleLiveStockRefreshTimer);
+            }
+            saleLiveStockRefreshTimer = setTimeout(function(){
+                saleLiveStockRefreshTimer = null;
+                refreshSaleMainStocksNow();
+            }, wait);
+        }
         function getPickerMetaLine(p){
             const pid = String(p.id || '');
             const prod = (+p.prod_stock || 0);
@@ -583,7 +623,8 @@ add_shortcode('stock_update_form', function($atts){
                 return `ID: ${pid} | موجودی انبار تولید: ${prod}`;
             }
             if(opType === 'sale' || opType === 'sale_teh'){
-                return `ID: ${pid} | موجودی انبار تولید: ${prod} | موجودی انبار اصلی: ${(+p.wc_stock || 0)}`;
+                const remainingMainStock = findRemainingMainStockById(pid);
+                return `ID: ${pid} | موجودی انبار تولید: ${prod} | موجودی لحظه‌ای انبار اصلی: ${remainingMainStock}`;
             }
             return `ID: ${pid} | موجودی انبار تولید: ${prod}`;
         }
@@ -750,8 +791,7 @@ add_shortcode('stock_update_form', function($atts){
                     const returnStock = (returnDestination === 'main') ? (+p.wc_stock || 0) : (+p.teh_stock || 0);
                     tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(returnStock)}</td>`);
                 } else if (isSaleOperation){
-                    const p = findById(it.id);
-                    const mainStock = +((p && p.wc_stock) || 0);
+                    const mainStock = findMainStockById(it.id);
                     tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(mainStock)}</td>`);
                 }
 
@@ -831,6 +871,17 @@ add_shortcode('stock_update_form', function($atts){
             buildAttributeFilters();
             $q.trigger('focus');
             renderPickerResults();
+
+            if ((opType === 'sale' || opType === 'sale_teh') && items.length > 0){
+                const ids = items.map(it => String(it.id || '')).filter(Boolean);
+                refreshStocksBeforeResult(ids).done(function(refreshRes){
+                    if(refreshRes && refreshRes.success && refreshRes.data && refreshRes.data.stocks){
+                        updateProductStocksInMemory(refreshRes.data.stocks);
+                        renderTable();
+                        renderPickerResults();
+                    }
+                });
+            }
         }
 
         function closeModal(){
@@ -1042,11 +1093,11 @@ add_shortcode('stock_update_form', function($atts){
         }
         function capQtyForSale(pid, qty, showAlert){
             if(opType !== 'sale' && opType !== 'sale_teh') return qty;
-            const stock = findMainStockById(pid);
+            const stock = findRemainingMainStockById(pid);
             if (qty > stock){
                 if (showAlert){
                     const name = findLabelById(pid) || ('#'+pid);
-                    alert(`برای "${name}" حداکثر قابل انتخاب ${stock} عدد است (موجودی انبار اصلی).`);
+                    alert(`برای "${name}" حداکثر قابل انتخاب ${stock} عدد است (موجودی لحظه‌ای انبار اصلی).`);
                 }
                 return stock;
             }
@@ -1167,9 +1218,9 @@ add_shortcode('stock_update_form', function($atts){
                         }
                     }
                     if (opType === 'sale' || opType === 'sale_teh'){
-                        const sourceStock = findMainStockById(pid);
+                        const sourceStock = findRemainingMainStockById(pid);
                         if (qty > sourceStock){
-                            alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی انبار اصلی است.`);
+                            alert(`مقدار انتخابی برای «${name}» بیشتر از موجودی لحظه‌ای انبار اصلی است.`);
                             return false;
                         }
                     }
@@ -1201,7 +1252,13 @@ add_shortcode('stock_update_form', function($atts){
                 }
 
                 renderTable();
-                syncSaleHoldOrder(true);
+                if (opType === 'sale' || opType === 'sale_teh'){
+                    syncSaleHoldOrder(true).always(function(){
+                        scheduleSaleMainStocksRefresh(1000);
+                    });
+                } else {
+                    syncSaleHoldOrder(true);
+                }
                 closeModal();
                 return true;
             };
@@ -1209,20 +1266,6 @@ add_shortcode('stock_update_form', function($atts){
             const afterDone = function(){
                 $addBtn.prop('disabled', false).css({opacity: 1, cursor: 'pointer'}).text(originalText);
             };
-
-            if (opType === 'sale' || opType === 'sale_teh'){
-                refreshStocksBeforeResult(selectedIds).done(function(refreshRes){
-                    if(refreshRes && refreshRes.success && refreshRes.data && refreshRes.data.stocks){
-                        updateProductStocksInMemory(refreshRes.data.stocks);
-                        renderPickerResults();
-                        renderTable();
-                    }
-                    addItemsToTable();
-                }).fail(function(){
-                    alert('به‌روزرسانی موجودی انجام نشد. لطفاً دوباره تلاش کنید.');
-                }).always(afterDone);
-                return;
-            }
 
             addItemsToTable();
             afterDone();
@@ -1420,16 +1463,16 @@ add_shortcode('stock_update_form', function($atts){
 
         $('#items-table').on('click','.row-inc', function(){
             const i = +$(this).data('i'); items[i].qty++; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
-            syncSaleHoldOrder(true);
+            syncSaleHoldOrder(true).always(function(){ scheduleSaleMainStocksRefresh(1000); });
         });
         $('#items-table').on('click','.row-dec', function(){
             const i = +$(this).data('i'); items[i].qty = Math.max(1, items[i].qty-1); enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
-            syncSaleHoldOrder(true);
+            syncSaleHoldOrder(true).always(function(){ scheduleSaleMainStocksRefresh(1000); });
         });
         $('#items-table').on('change','.row-qty', function(){
             const i = +$(this).data('i'); let v = +$(this).val();
             v = Math.max(1, v||1); items[i].qty = v; enforceOutLimit(i); enforceTransferLimit(i); enforceSaleLimit(i); renderTable();
-            syncSaleHoldOrder(true);
+            syncSaleHoldOrder(true).always(function(){ scheduleSaleMainStocksRefresh(1000); });
         });
 
         $('#items-table').on('click','.btn-del',function(){
