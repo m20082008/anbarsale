@@ -22,13 +22,22 @@ function wc_suf_expire_sale_hold_order( $order_id ) {
     $order = wc_get_order( $order_id );
     if ( ! $order ) return;
     if ( $order->get_created_via() !== 'wc_suf_manual_sale_hold' ) return;
-    if ( ! $order->has_status( 'pending' ) ) return;
+    if ( ! $order->has_status( 'initialorder' ) ) return;
     $order->set_status( 'instaformremove', 'انقضای زمان هولد فرم فروش اینستا.' );
     $order->save();
 }
 add_action( 'wc_suf_sale_hold_expire_event', 'wc_suf_expire_sale_hold_order', 10, 1 );
 
 add_action( 'init', function() {
+    register_post_status( 'wc-initialorder', [
+        'label'                     => 'ثبت اولیه سفارش',
+        'public'                    => true,
+        'exclude_from_search'       => false,
+        'show_in_admin_all_list'    => true,
+        'show_in_admin_status_list' => true,
+        'label_count'               => _n_noop( 'ثبت اولیه سفارش <span class="count">(%s)</span>', 'ثبت اولیه سفارش <span class="count">(%s)</span>' ),
+    ] );
+
     register_post_status( 'wc-instaformremove', [
         'label'                     => 'حذف سفارش اینستا',
         'public'                    => true,
@@ -39,9 +48,54 @@ add_action( 'init', function() {
     ] );
 } );
 add_filter( 'wc_order_statuses', function( $statuses ) {
+    $new_statuses = [];
+    foreach ( $statuses as $status_key => $status_label ) {
+        $new_statuses[ $status_key ] = $status_label;
+        if ( 'wc-pending' === $status_key ) {
+            $new_statuses['wc-initialorder'] = 'ثبت اولیه سفارش';
+        }
+    }
+    if ( ! isset( $new_statuses['wc-initialorder'] ) ) {
+        $new_statuses['wc-initialorder'] = 'ثبت اولیه سفارش';
+    }
+
+    $statuses = $new_statuses;
     $statuses['wc-instaformremove'] = 'حذف سفارش اینستا';
     return $statuses;
 } );
+
+function wc_suf_mark_order_stock_reduced( $order ) {
+    $order = is_a( $order, 'WC_Order' ) ? $order : wc_get_order( $order );
+    if ( ! $order ) {
+        return;
+    }
+
+    if ( method_exists( $order, 'get_data_store' ) ) {
+        $data_store = $order->get_data_store();
+        if ( $data_store && method_exists( $data_store, 'set_stock_reduced' ) ) {
+            $data_store->set_stock_reduced( $order->get_id(), true );
+            return;
+        }
+    }
+
+    update_post_meta( $order->get_id(), '_order_stock_reduced', 'yes' );
+}
+
+/**
+ * برای سفارش‌هایی که موجودی‌شان در هولد به‌صورت دستی کم شده،
+ * اجازه نده ووکامرس در تغییر وضعیت دوباره کسر موجودی انجام دهد.
+ */
+add_filter( 'woocommerce_can_reduce_order_stock', function( $can_reduce, $order ) {
+    if ( ! $can_reduce || ! is_a( $order, 'WC_Order' ) ) {
+        return $can_reduce;
+    }
+
+    if ( 'yes' === $order->get_meta( '_wc_suf_stock_already_reduced', true ) ) {
+        return false;
+    }
+
+    return $can_reduce;
+}, 10, 2 );
 
 add_action( 'woocommerce_order_status_instaformremove', function( $order_id ) {
     $order = wc_get_order( $order_id );
@@ -107,7 +161,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     if ( 'yes' === $order->get_meta('_wc_suf_sale_logged', true) ) {
         return;
     }
-    if ( 'yes' === $order->get_meta('_wc_suf_sale_hold_active', true ) && $order->has_status( 'pending' ) ) {
+    if ( 'yes' === $order->get_meta('_wc_suf_sale_hold_active', true ) && $order->has_status( [ 'pending', 'initialorder' ] ) ) {
         return;
     }
 
@@ -142,6 +196,7 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
     $order_number = (string) $order->get_order_number();
     $created_at_mysql = current_time('mysql');
     $stock_source = wc_suf_get_order_stock_source( $order );
+    $stock_already_reduced = ( 'yes' === $order->get_meta( '_wc_suf_stock_already_reduced', true ) );
 
     $logged_any_item = false;
     $receipt_rows = [];
@@ -169,7 +224,12 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
 
         $change_qty = -1 * $qty;
         $item_reduced_stock = wc_suf_get_order_item_reduced_stock_qty( $item );
-        if ( $item_reduced_stock !== null && $item_reduced_stock > 0 ) {
+        if ( $stock_already_reduced ) {
+            // در فروش‌هایی که قبلاً موجودی‌شان هنگام هولد کم شده،
+            // «موجودی بعد» همان موجودی فعلی لحظه ثبت نهایی است.
+            $new_qty = $current_stock;
+            $old_qty = $current_stock + $qty;
+        } elseif ( $item_reduced_stock !== null && $item_reduced_stock > 0 ) {
             // وقتی ووکامرس قبلاً موجودی را کم کرده، موجودی فعلی همان new_qty است.
             $new_qty = $current_stock;
             $old_qty = $current_stock + $item_reduced_stock;
@@ -271,6 +331,7 @@ add_action( 'woocommerce_new_order', 'wc_suf_log_woocommerce_order_sale', 20 );
 add_action( 'woocommerce_checkout_order_processed', 'wc_suf_log_woocommerce_order_sale', 20 );
 add_action( 'woocommerce_store_api_checkout_order_processed', 'wc_suf_log_woocommerce_order_sale', 20 );
 add_action( 'woocommerce_order_status_pending', 'wc_suf_log_woocommerce_order_sale', 20 );
+add_action( 'woocommerce_order_status_initialorder', 'wc_suf_log_woocommerce_order_sale', 20 );
 add_action( 'woocommerce_order_status_on-hold', 'wc_suf_log_woocommerce_order_sale', 20 );
 add_action( 'woocommerce_order_status_processing', 'wc_suf_log_woocommerce_order_sale', 20 );
 add_action( 'woocommerce_order_status_completed', 'wc_suf_log_woocommerce_order_sale', 20 );
