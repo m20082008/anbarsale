@@ -53,7 +53,7 @@ function wc_suf_sync_sale_hold_order_handler(){
     } else {
         $order = wc_create_order();
         $order->set_created_via( 'wc_suf_manual_sale_hold' );
-        $order->set_status( 'pending', 'ایجاد اولیه سفارش هولد از فرم فروش.' );
+        $order->set_status( 'initialorder', 'ایجاد اولیه سفارش هولد از فرم فروش.' );
     }
     if ( ! $order ) {
         wp_send_json_error(['message'=>'دسترسی به سفارش هولد ممکن نیست.']);
@@ -125,6 +125,7 @@ function wc_suf_sync_sale_hold_order_handler(){
     $order->update_meta_data( '_wc_suf_sale_customer_address', $customer_address );
     $order->calculate_totals();
     $order->save();
+    wc_suf_mark_order_stock_reduced( $order );
 
     wc_suf_schedule_sale_hold_expiry( $order->get_id() );
 
@@ -658,6 +659,9 @@ function wc_suf_save_stock_update_handler(){
             $sale_order->update_meta_data( '_wc_suf_sale_customer_mobile', $sale_customer_mobile );
             $sale_order->update_meta_data( '_wc_suf_sale_customer_address', $sale_customer_address );
             $sale_order->calculate_totals();
+            if ( $sale_hold_order_id > 0 ) {
+                wc_suf_mark_order_stock_reduced( $sale_order );
+            }
             $sale_order->set_status( 'processing', 'ثبت سفارش از فرم عملیات فروش انبار تولید.' );
             $sale_order->save();
             if ( $sale_hold_order_id <= 0 ) {
