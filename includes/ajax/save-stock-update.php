@@ -62,6 +62,9 @@ function wc_suf_sync_sale_hold_order_handler(){
     if ( $order->get_created_via() !== 'wc_suf_manual_sale_hold' && $order->get_created_via() !== 'wc_suf_manual_sale' ) {
         wp_send_json_error(['message'=>'این سفارش قابل همگام‌سازی با فرم فروش نیست.']);
     }
+    if ( $order->has_status( 'pending' ) ) {
+        $order->set_status( 'initialorder', 'تغییر وضعیت سفارش هولد از در انتظار پرداخت به ثبت اولیه سفارش.' );
+    }
 
     $existing_items = [];
     foreach ( $order->get_items('line_item') as $item_id => $item ) {
@@ -120,6 +123,7 @@ function wc_suf_sync_sale_hold_order_handler(){
     $order->update_meta_data( '_wc_suf_sale_channel', ( $op_type === 'sale_teh' ? 'tehranpars' : 'main' ) );
     $order->update_meta_data( '_wc_suf_sale_operation', $op_type );
     $order->update_meta_data( '_wc_suf_sale_hold_active', 'yes' );
+    $order->update_meta_data( '_wc_suf_stock_already_reduced', 'yes' );
     $order->update_meta_data( '_wc_suf_sale_customer_name', $customer_name );
     $order->update_meta_data( '_wc_suf_sale_customer_mobile', $customer_mobile );
     $order->update_meta_data( '_wc_suf_sale_customer_address', $customer_address );

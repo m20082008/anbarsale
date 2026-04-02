@@ -81,6 +81,22 @@ function wc_suf_mark_order_stock_reduced( $order ) {
     update_post_meta( $order->get_id(), '_order_stock_reduced', 'yes' );
 }
 
+/**
+ * برای سفارش‌هایی که موجودی‌شان در هولد به‌صورت دستی کم شده،
+ * اجازه نده ووکامرس در تغییر وضعیت دوباره کسر موجودی انجام دهد.
+ */
+add_filter( 'woocommerce_can_reduce_order_stock', function( $can_reduce, $order ) {
+    if ( ! $can_reduce || ! is_a( $order, 'WC_Order' ) ) {
+        return $can_reduce;
+    }
+
+    if ( 'yes' === $order->get_meta( '_wc_suf_stock_already_reduced', true ) ) {
+        return false;
+    }
+
+    return $can_reduce;
+}, 10, 2 );
+
 add_action( 'woocommerce_order_status_instaformremove', function( $order_id ) {
     $order = wc_get_order( $order_id );
     if ( ! $order ) return;
