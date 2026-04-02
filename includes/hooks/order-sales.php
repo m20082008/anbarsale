@@ -192,10 +192,17 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
 
         $change_qty = -1 * $qty;
         $item_reduced_stock = wc_suf_get_order_item_reduced_stock_qty( $item );
+        $order_stock_reduced = 'yes' === $order->get_meta( '_order_stock_reduced', true );
+
         if ( $item_reduced_stock !== null && $item_reduced_stock > 0 ) {
             // وقتی ووکامرس قبلاً موجودی را کم کرده، موجودی فعلی همان new_qty است.
             $new_qty = $current_stock;
             $old_qty = $current_stock + $item_reduced_stock;
+        } elseif ( $order_stock_reduced ) {
+            // اگر فلگ سفارش نشان می‌دهد کسر موجودی انجام شده اما متای آیتم موجود نیست،
+            // برای جلوگیری از ثبت لاگ اشتباه، old_qty را با qty آیتم بازسازی می‌کنیم.
+            $new_qty = $current_stock;
+            $old_qty = $current_stock + $qty;
         } else {
             // اگر هنوز کسر انبار انجام نشده، old_qty را از انبار اصلی می‌خوانیم و new_qty را محاسبه می‌کنیم.
             $old_qty = $current_stock;
