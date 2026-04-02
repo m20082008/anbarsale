@@ -191,16 +191,10 @@ function wc_suf_log_woocommerce_order_sale( $order_id ) {
         $current_stock = wc_suf_get_order_stock_qty_by_source( $product, $stock_source );
 
         $change_qty = -1 * $qty;
-        $item_reduced_stock = wc_suf_get_order_item_reduced_stock_qty( $item );
-        if ( $item_reduced_stock !== null && $item_reduced_stock > 0 ) {
-            // وقتی ووکامرس قبلاً موجودی را کم کرده، موجودی فعلی همان new_qty است.
-            $new_qty = $current_stock;
-            $old_qty = $current_stock + $item_reduced_stock;
-        } else {
-            // اگر هنوز کسر انبار انجام نشده، old_qty را از انبار اصلی می‌خوانیم و new_qty را محاسبه می‌کنیم.
-            $old_qty = $current_stock;
-            $new_qty = $current_stock - $qty;
-        }
+        // در لحظه ثبت لاگ فروش، موجودی جاری ووکامرس همان موجودی بعد از کسر است.
+        // برای به‌دست‌آوردن موجودی قبل، تعداد سفارش را به موجودی فعلی اضافه می‌کنیم.
+        $new_qty = $current_stock;
+        $old_qty = $current_stock + $qty;
         $product_name = (string) ( $item->get_name() ?: ( $product ? $product->get_name() : '' ) );
 
         $move_inserted = $wpdb->insert(
