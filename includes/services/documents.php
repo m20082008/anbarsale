@@ -73,7 +73,7 @@ function wc_suf_generate_batch_label_html( $batch_code, $rows ) {
         . '.barcode{width:100%; height:100%;}'
         . '.price-wrap{padding:1mm 1.3mm; font-size:2.8mm; line-height:1.4; text-align:right; direction:rtl; display:flex; flex-direction:column; justify-content:center; gap:0.5mm;}'
         . '.price-line,.code-line{white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}'
-        . '.footer-row{display:grid; grid-template-columns:19mm 1fr;}'
+        . '.footer-row{display:grid; grid-template-columns:17mm 1fr;}'
         . '.logo-wrap{display:flex; align-items:center; justify-content:center;padding-right: 2mm;
     padding-bottom: 2mm;}'
         . '.logo-wrap img{max-width:100%; max-height:78%; object-fit:contain; object-position:center; margin:0;}'
