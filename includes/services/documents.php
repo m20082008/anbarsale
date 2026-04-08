@@ -76,7 +76,7 @@ function wc_suf_generate_batch_label_html( $batch_code, $rows ) {
         . '.footer-row{display:grid; grid-template-columns:17mm 1fr;}'
         . '.logo-wrap{display:flex; align-items:center; justify-content:center;padding-right: 2mm;
     padding-bottom: 2mm;}'
-        . '.logo-wrap img{max-width:100%; max-height:78%; object-fit:contain; object-position:center; margin:0;}'
+        . '.logo-wrap img{max-width:100%; max-height:78%; object-fit:contain; object-position:center; margin:0;margin-bottom: 1.5mm;}'
         . '.site-wrap{display:flex; align-items:center; justify-content:flex-end; padding:0 1.5mm; font-size:2.9mm;}'
         . '@media print{.sheet{margin:0;}}'
         . '</style>'
