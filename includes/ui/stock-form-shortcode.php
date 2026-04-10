@@ -720,7 +720,10 @@ add_shortcode('stock_update_form', function($atts){
 
             theadRow.append('<th style="padding:8px; text-align:right; width:110px">ID</th>');
             theadRow.append('<th style="padding:8px; text-align:right">محصول</th>');
-            theadRow.append(`<th style="padding:8px; text-align:center; width:160px">${isTransfer ? 'موجودی انبار مبدا' : 'موجودی انبار تولید'}</th>`);
+            const sourceStockLabel = isTransfer
+                ? 'موجودی انبار مبدا'
+                : (isSaleOperation ? 'موجودی انبار اصلی (به‌روز)' : 'موجودی انبار تولید');
+            theadRow.append(`<th style="padding:8px; text-align:center; width:160px">${sourceStockLabel}</th>`);
             if (isOutMain){
                 theadRow.append('<th style="padding:8px; text-align:center; width:170px">موجودی انبار اصلی</th>');
             } else if (isOutTeh){
@@ -755,7 +758,9 @@ add_shortcode('stock_update_form', function($atts){
                 const tr = $('<tr style="border-top:1px solid #e5e7eb">');
                 tr.append(`<td style="padding:8px">${escapeHtml(it.id)}</td>`);
                 tr.append(`<td style="padding:8px">${escapeHtml(it.name)}</td>`);
-                const sourceStock = isTransfer ? findTransferSourceStockById(it.id) : it.stock;
+                const sourceStock = isTransfer
+                    ? findTransferSourceStockById(it.id)
+                    : (isSaleOperation ? findMainStockById(it.id) : it.stock);
                 tr.append(`<td style="padding:8px; text-align:center">${escapeHtml(sourceStock)}</td>`);
 
                 if (isOutMain || isOutTeh){
