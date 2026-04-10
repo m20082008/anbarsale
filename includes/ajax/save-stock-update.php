@@ -624,10 +624,18 @@ function wc_suf_save_stock_update_handler(){
 
     if ( $op_type === 'sale' || $op_type === 'sale_teh' ) {
         try {
+            $should_reduce_stock_after_finalize = ( $sale_hold_order_id <= 0 );
+
             if ( $sale_hold_order_id > 0 ) {
                 $sale_order = wc_get_order( $sale_hold_order_id );
                 if ( ! $sale_order ) {
                     throw new Exception('سفارش هولد یافت نشد.');
+                }
+
+                $stock_was_released = ( 'yes' === $sale_order->get_meta( '_wc_suf_hold_stock_released', true ) );
+                $is_expired_hold_order = $sale_order->has_status( 'instaformremove' );
+                if ( $stock_was_released || $is_expired_hold_order ) {
+                    $should_reduce_stock_after_finalize = true;
                 }
             } else {
                 $sale_order = wc_create_order();
@@ -657,10 +665,13 @@ function wc_suf_save_stock_update_handler(){
             $sale_order->update_meta_data( '_wc_suf_sale_customer_name', $sale_customer_name );
             $sale_order->update_meta_data( '_wc_suf_sale_customer_mobile', $sale_customer_mobile );
             $sale_order->update_meta_data( '_wc_suf_sale_customer_address', $sale_customer_address );
+            if ( $should_reduce_stock_after_finalize ) {
+                $sale_order->update_meta_data( '_wc_suf_hold_stock_released', 'no' );
+            }
             $sale_order->calculate_totals();
             $sale_order->set_status( 'processing', 'ثبت سفارش از فرم عملیات فروش انبار تولید.' );
             $sale_order->save();
-            if ( $sale_hold_order_id <= 0 ) {
+            if ( $should_reduce_stock_after_finalize ) {
                 wc_reduce_stock_levels( $sale_order->get_id() );
             }
             wc_suf_clear_sale_hold_expiry( $sale_order->get_id() );
